@@ -1,5 +1,4 @@
 #!/usr/bin/python
-
 # Edited from this original - https://github.com/modmypi/Moisture-Sensor/blob/master/moisture.py
 
 # Import the GPIO library
