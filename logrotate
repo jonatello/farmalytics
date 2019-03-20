@@ -1,0 +1,9 @@
+/var/log/farmalytics/*.log {
+  rotate 4
+  weekly
+  size 100k
+  compress
+  delaycompress
+  missingok
+  notifempty
+  }
