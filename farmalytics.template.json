@@ -1,12 +1,12 @@
-  "farmalytics": {
+{
     "order": 0,
     "version": 60001,
     "index_patterns": [
       "farmalytics-*"
     ],
     "settings": {
-      "number_of_shards": 1
-      "number_of_replicas": 0
+      "number_of_shards": 1,
+      "number_of_replicas": 0,
       "index": {
         "refresh_interval": "5s"
       }
@@ -67,4 +67,6 @@
           }
         }
       }
-    }
+    },
+    "aliases": {}
+  }
