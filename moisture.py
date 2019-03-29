@@ -1,8 +1,12 @@
 #!/usr/bin/python
 # Edited from this original - https://github.com/modmypi/Moisture-Sensor/blob/master/moisture.py
 
-# Import the GPIO library
+# Import the GPIO library and time
 import RPi.GPIO as GPIO
+import time
+
+# Create timestamp
+timestamp = time.strftime("%x") + " " + time.strftime("%X")
 
 # Set our GPIO numbering to BCM
 GPIO.setmode(GPIO.BCM)
@@ -14,4 +18,4 @@ DO = 21
 GPIO.setup(DO, GPIO.IN)
 
 # Print the value from the GPIO pin (1 is off, 0 is on/moisture)
-print 'Value: ', GPIO.input(DO)
+print timestamp, 'Value: ', GPIO.input(DO)
