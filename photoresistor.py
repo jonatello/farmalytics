@@ -1,9 +1,13 @@
 #!/usr/bin/env python
 # Edited from this original - https://github.com/sunfounder/SunFounder_SensorKit_for_RPi2/blob/master/Python/20_photoresistor.py
 
-# Import the PCF8591 module and GPIO library
+# Import the PCF8591 module, GPIO library, and time
 import PCF8591 as ADC
 import RPi.GPIO as GPIO
+import time
+
+# Create timestamp
+timestamp = time.strftime("%x") + " " + time.strftime("%X")
 
 # Set our GPIO numbering to BCM
 GPIO.setmode(GPIO.BCM)
@@ -16,4 +20,4 @@ ADC.setup(0x48)
 GPIO.setup(DO, GPIO.IN)
 
 # Print the value from the GPIO pin (255 is off, 0 is on/full sunlight)
-print 'Value: ', ADC.read(0)
+print timestamp, 'Value: ', ADC.read(0)
