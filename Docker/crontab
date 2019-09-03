@@ -1,0 +1,3 @@
+* * * * * root python /farmalytics/scripts/dht.py >> /farmalytics/logs/dht.log
+* * * * * root python /farmalytics/scripts/outside.py >> /farmalytics/logs/outside.log
+* * * * * root python /farmalytics/scripts/moisture.py >> /farmalytics/logs/moisture.log
