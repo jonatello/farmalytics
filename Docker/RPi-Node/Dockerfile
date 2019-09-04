@@ -1,5 +1,6 @@
 # BUILD-USING:          docker build -t farmalytics .
 # RUN-USING:            docker container run -d --name farmalytics -v /home/pi/farmalytics/logs:/farmalytics/logs --privileged farmalytics
+# TEST-USING:           docker container run -it --rm --name farmalytics -v /home/pi/farmalytics/logs:/farmalytics/logs --privileged farmalytics
 
 # Python Base Image from https://hub.docker.com/r/arm32v7/python/
 FROM arm32v7/python:3
@@ -27,5 +28,5 @@ COPY filebeat filebeat
 COPY filebeat.yml filebeat.yml
 RUN chmod +x filebeat
 
-# Start filebeat
-CMD cron && ./filebeat -e -c filebeat.yml
+# Start cron and filebeat
+ENTRYPOINT cron && ./filebeat -e -c filebeat.yml
