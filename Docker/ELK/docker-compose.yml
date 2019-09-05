@@ -7,8 +7,6 @@ services:
     restart: unless-stopped
     volumes:
       - ./data:/var/lib/elasticsearch
-      - ./elasticsearch.yml:/etc/elasticsearch/elasticsearch.yml
-      - ./02-beats-input.conf:/etc/logstash/conf.d/02-beats-input.conf
     ports:
       - "9200:9200"
       - "5601:5601"
