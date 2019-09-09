@@ -4,7 +4,7 @@ services:
   farmalytics:
     container_name: farmalytics-node
     build:
-      context: .
+      context: farmalytics
       dockerfile: ./Dockerfile
     restart: unless-stopped
     volumes:
@@ -19,5 +19,8 @@ services:
     restart: unless-stopped
     volumes:
       - /mnt/motion:/var/lib/motion
+    ports:
+      - 8080:8080
+      - 8081:8081
     devices:
       - /dev/video0:dev/video0

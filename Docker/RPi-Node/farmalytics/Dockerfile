@@ -1,8 +1,3 @@
-# BUILD-USING:		docker build -t farmalytics .
-# RUN-USING:		docker container run -d --name farmalytics -v $(pwd)/logs:/var/log/farmalytics --privileged farmalytics
-# TEST-USING:		docker container run -it --rm --name farmalytics -v $(pwd)/logs:/var/log/farmalytics --privileged farmalytics
-
-# Python Base Image from https://hub.docker.com/r/arm32v7/python/
 FROM arm32v7/python:3
 
 # Run updates
@@ -22,11 +17,11 @@ RUN mkdir /var/log/farmalytics
 VOLUME /var/log/farmalytics
 ADD scripts scripts
 COPY config.py scripts/config.py
-VOLUME scripts/config.py
+VOLUME /farmalytics/scripts
 
 # Setup filebeat
-COPY filebeat filebeat
-COPY filebeat.yml filebeat.yml
+COPY filebeat .
+COPY filebeat.yml .
 RUN chmod +x filebeat
 
 # Setup logrotate

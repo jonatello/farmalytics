@@ -11,4 +11,4 @@ VOLUME /var/lib/motion
 
 EXPOSE 8080 8081
 
-ENTRYPOINT ["motion"]
+ENTRYPOINT motion && tail -f /var/log/motion/motion.log
