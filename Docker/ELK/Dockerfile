@@ -1,7 +1,3 @@
-# BUILD-USING:          docker build -t farmalytics-elk .
-# RUN-USING:            docker container run -d --name farmalytics-elk -v $(pwd)/data:/etc/lib/elasticsearch farmalytics-elk
-# TEST-USING:           docker container run -it --rm --name farmalytics-elk -v $(pwd)/data:/etc/lib/elasticsearch farmalytics-elk
-
 FROM sebp/elk
 
 ADD 30-output.conf /etc/logstash/conf.d/30-output.conf
