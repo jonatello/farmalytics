@@ -19,3 +19,5 @@ services:
     restart: unless-stopped
     volumes:
       - /mnt/motion:/var/lib/motion
+    devices:
+      - /dev/video0:dev/video0
