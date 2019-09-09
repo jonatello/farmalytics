@@ -2,8 +2,10 @@ version: "2"
 
 services:
   elk:
-    image: sebp/elk
-    container_name: elk
+    container_name: farmalytics-elk
+    build:
+      context: .
+      dockerfile: ./Dockerfile
     restart: unless-stopped
     volumes:
       - ./data:/var/lib/elasticsearch

@@ -1,0 +1,12 @@
+version: "2"
+
+services:
+  farmalytics:
+    container_name: farmalytics-node
+    build:
+      context: .
+      dockerfile: ./Dockerfile
+    restart: unless-stopped
+    volumes:
+      - ./logs:/var/log/farmalytics
+    privileged: true
