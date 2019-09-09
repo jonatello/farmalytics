@@ -10,3 +10,12 @@ services:
     volumes:
       - ./logs:/var/log/farmalytics
     privileged: true
+
+  motion:
+    container_name: farmalytics-motion
+    build:
+      context: motion
+      dockerfile: ./Dockerfile
+    restart: unless-stopped
+    volumes:
+      - /mnt/motion:/var/lib/motion
