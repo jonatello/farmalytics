@@ -1,15 +1,15 @@
 version: "3.7"
 
 services:
-  farmalytics:
+  node:
     container_name: farmalytics-node
     build:
       context: farmalytics
       dockerfile: ./Dockerfile
     restart: unless-stopped
-    volumes:
-      - ./logs:/var/log/farmalytics
     privileged: true
+    environment:
+      TZ: "America/New_York"
 
   motion:
     container_name: farmalytics-motion
@@ -24,3 +24,5 @@ services:
       - 8081:8081
     devices:
       - /dev/video0:dev/video0
+    environment:
+      TZ: "America/New_York"
