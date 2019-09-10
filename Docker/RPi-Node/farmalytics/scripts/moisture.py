@@ -8,4 +8,4 @@ pin = config.moisture_pin
 GPIO.setmode(GPIO.BCM)
 GPIO.setup(pin, GPIO.IN)
 
-print(timestamp, 'Value: ', GPIO.input(pin))
+print(timestamp, 'Value=' + str(GPIO.input(pin)))

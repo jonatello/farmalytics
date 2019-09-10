@@ -12,4 +12,4 @@ if resp.ok:
     response = json.loads(resp.text)
     temperature = response['main']['temp']
     humidity = response['main']['humidity'] * .01
-    print(timestamp, 'Temp: ', temperature, 'Humidity: ', humidity)
+    print(timestamp, 'Temp=' + str(temperature), 'Humidity=' + str(humidity))

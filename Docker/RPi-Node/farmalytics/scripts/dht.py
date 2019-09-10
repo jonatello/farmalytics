@@ -23,4 +23,4 @@ except Exception:
 humidity = humidity * .01
 
 if humidity is not None and temperature is not None:
-    print(timestamp, 'Temp: ', temperature, 'Humidity: ', humidity)
+    print(timestamp, 'Temp=' + str(temperature), 'Humidity=' + str(humidity))
