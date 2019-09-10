@@ -1,3 +1,3 @@
-*/5 * * * * root /usr/local/bin/python /farmalytics/scripts/dht.py >> /var/log/farmalytics/dht.log
-*/5 * * * * root /usr/local/bin/python /farmalytics/scripts/outside.py >> /var/log/farmalytics/outside.log
-*/5 * * * * root /usr/local/bin/python /farmalytics/scripts/moisture.py >> /var/log/farmalytics/moisture.log
+* * * * * root /usr/local/bin/python /farmalytics/scripts/dht.py >> /var/log/farmalytics/dht.log
+* * * * * root /usr/local/bin/python /farmalytics/scripts/outside.py >> /var/log/farmalytics/outside.log
+* * * * * root /usr/local/bin/python /farmalytics/scripts/moisture.py >> /var/log/farmalytics/moisture.log
