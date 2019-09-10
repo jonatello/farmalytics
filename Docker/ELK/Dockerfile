@@ -1,7 +1,7 @@
 FROM sebp/elk
 
 RUN rm /etc/logstash/conf.d/*
-ADD farmalytics.conf /etc/logstash/conf.d/farmalytics.conf
+ADD logstash.conf /etc/logstash/conf.d/farmalytics.conf
 ADD elasticsearch.yml /etc/elasticsearch/elasticsearch.yml
 
 #COPY farmalytics.template.json farmalytics.template.json
