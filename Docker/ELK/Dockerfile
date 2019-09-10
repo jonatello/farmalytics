@@ -1,8 +1,7 @@
 FROM sebp/elk
 
-ADD 30-output.conf /etc/logstash/conf.d/30-output.conf
-ADD 02-beats-input.conf /etc/logstash/conf.d/02-beats-input.conf
-ADD 12-farmalytics-filter.conf /etc/logstash/conf.d/12-farmalytics-filter.conf
+RUN rm /etc/logstash/conf.d/*
+ADD farmalytics.conf /etc/logstash/conf.d/farmalytics.conf
 ADD elasticsearch.yml /etc/elasticsearch/elasticsearch.yml
 
 #COPY farmalytics.template.json farmalytics.template.json
