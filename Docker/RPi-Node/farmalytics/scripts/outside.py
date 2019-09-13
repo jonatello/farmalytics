@@ -1,11 +1,11 @@
-import config
+import os
 import json
 import time
 import requests
 
 timestamp = time.strftime("%x") + " " + time.strftime("%X")
 
-OPENWEATHER_URL = 'https://api.openweathermap.org/data/2.5/weather?id=' + config.ow_city_id + '&APPID=' + config.ow_api_key + '&units=imperial'
+OPENWEATHER_URL = 'https://api.openweathermap.org/data/2.5/weather?id=' + os.environ['OW_CITY_ID'] + '&APPID=' + os.environ['OW_API_KEY'] + '&units=imperial'
 
 resp = requests.get(OPENWEATHER_URL)
 if resp.ok:
