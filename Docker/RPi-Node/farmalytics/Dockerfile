@@ -1,7 +1,7 @@
 FROM arm32v7/python:3
 
 # Run updates
-RUN apt-get -y update && apt-get -y upgrade && apt-get install -y cron logrotate
+RUN apt-get -y update && apt-get -y upgrade && apt-get install -y cron logrotate git golang
 
 # Intall the Python modules
 RUN pip install --no-cache-dir rpi.gpio Adafruit_DHT requests
@@ -19,10 +19,9 @@ VOLUME /farmalytics/scripts
 COPY crontab /etc/cron.d/farmalytics
 RUN chmod 0644 /etc/cron.d/farmalytics
 
-# Setup filebeat
-COPY filebeat .
+# Build filebeat and copy over config
+RUN scripts/build_filebeat.sh
 COPY filebeat.yml .
-RUN chmod +x filebeat
 
 # Setup logrotate
 COPY logrotate /etc/logrotate.d/farmalytics
