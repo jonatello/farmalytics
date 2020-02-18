@@ -2,13 +2,6 @@
   "index_patterns": [
     "metricbeat-*"
   ],
-    "settings": {
-    "number_of_shards": 1,
-    "number_of_replicas": 0,
-    "index": {
-      "refresh_interval": "5s"
-    }
-  },
   "mappings": {
     "doc": {
       "_meta": {
@@ -10675,6 +10668,8 @@
   },
   "order": 1,
   "settings": {
+    "number_of_shards": 1,
+    "number_of_replicas": 0,
     "index": {
       "mapping": {
         "total_fields": {
