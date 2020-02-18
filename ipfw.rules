@@ -1,0 +1,29 @@
+IPF="ipfw -q add"
+ipfw -q -f flush
+
+#loopback 
+$IPF 10 allow all from any to any via lo0
+$IPF 20 deny all from any to 127.0.0.0/8
+$IPF 30 deny all from 127.0.0.0/8 to any
+$IPF 40 deny tcp from any to any frag
+
+# statefull
+$IPF 50 check-state
+$IPF 60 allow tcp from any to any established
+$IPF 70 allow all from any to any out keep-state
+$IPF 80 allow icmp from any to any
+
+# open port http (80), https (443), logstash (5044, 5140)
+$IPF 150 allow tcp from any to any 80 in
+$IPF 160 allow tcp from any to any 80 out
+$IPF 170 allow tcp from any to any 443 in
+$IPF 180 allow tcp from any to any 443 out
+$IPF 190 allow tcp from any to any 5044 in
+$IPF 200 allow tcp from any to any 5044 out
+$IPF 210 allow tcp from any to any 5140 in
+$IPF 220 allow tcp from any to any 5140 out
+$IPF 230 allow tcp from any to any 5045 in
+$IPF 240 allow tcp from any to any 5045 out
+
+# deny and log everything 
+$IPF 500 deny log all from any to any
