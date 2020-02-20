@@ -25,6 +25,15 @@
             }
           },
           {
+            "value_fields": {
+              "match": "*value*",
+              "match_mapping_type": "string",
+              "mapping": {
+                "type": "long"
+              }
+            }
+          },
+          {
             "string_fields": {
               "match": "*",
               "match_mapping_type": "string",
