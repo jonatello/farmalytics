@@ -7,9 +7,16 @@ services:
       context: farmalytics
       dockerfile: ./Dockerfile
     restart: unless-stopped
+    ports:
+      - 666:666
     privileged: true
     env_file:
       - farmalytics.env
+    healthcheck:
+      test: curl -sS http://127.0.0.1:666 || exit 1
+      interval: 5s
+      timeout: 10s
+      retries: 3
 
   motion:
     container_name: farmalytics-motion

@@ -1,8 +1,0 @@
-filebeat.inputs:
-- type: log
-  enabled: true
-  paths:
-    - /var/log/farmalytics/*.log
-
-output.logstash:
-  hosts: ["<logstash_host_ip>:5044"]

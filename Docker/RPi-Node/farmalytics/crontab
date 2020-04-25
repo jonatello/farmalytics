@@ -1,3 +1,0 @@
-* * * * * root . /farmalytics/scripts/load_env.sh; /usr/local/bin/python /farmalytics/scripts/dht.py >> /var/log/farmalytics/dht.log
-* * * * * root . /farmalytics/scripts/load_env.sh; /usr/local/bin/python /farmalytics/scripts/outside.py >> /var/log/farmalytics/outside.log
-* * * * * root . /farmalytics/scripts/load_env.sh; /usr/local/bin/python /farmalytics/scripts/moisture.py >> /var/log/farmalytics/moisture.log
