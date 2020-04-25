@@ -2,7 +2,7 @@ version: "3.7"
 
 services:
   node:
-    container_name: farmalytics-node
+    container_name: farmalytics
     build:
       context: farmalytics
       dockerfile: ./Dockerfile
@@ -19,13 +19,14 @@ services:
       retries: 3
 
   motion:
-    container_name: farmalytics-motion
+    container_name: motion
     build:
       context: motion
       dockerfile: ./Dockerfile
     restart: unless-stopped
     volumes:
       - /mnt/motion:/var/lib/motion
+      - ./motion_config:/etc/motion
     ports:
       - 8080:8080
       - 8081:8081
