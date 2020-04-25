@@ -11,11 +11,11 @@ import requests
 # DHT sensor settings
 dht_pin = os.environ['DHT_PIN']
 
-sensor = 'AM2302'
+sensor_name = os.environ['DHT_SENSOR']
 sensor_type = {'DHT11': dht.DHT11,
                'DHT22': dht.DHT22,
                'AM2302': dht.AM2302}
-dht_sensor = sensor_type[os.environ['DHT_SENSOR']]
+dht_sensor = sensor_type[sensor_name]
 
 # OpenWeather settings
 OPENWEATHER_URL = 'https://api.openweathermap.org/data/2.5/weather?id=' + os.environ['OW_CITY_ID'] + '&APPID=' + os.environ['OW_API_KEY'] + '&units=imperial'
@@ -41,12 +41,12 @@ if __name__ == '__main__':
 
         if sensor_temperature:
             sensor_temperature = sensor_temperature * 9.0 / 5.0 + 32
-            temperature.labels(source='pi', pin=dht_pin, sensor=sensor).set(sensor_temperature)
+            temperature.labels(source='pi', pin=dht_pin, sensor=sensor_name).set(sensor_temperature)
         else:
             print(datetime.now().strftime("%d/%m/%Y %H:%M:%S") + " Temperature from sensor is null.")
 
         if sensor_humidity:
-            humidity.labels(source='pi', pin=dht_pin, sensor=sensor).set(sensor_humidity)
+            humidity.labels(source='pi', pin=dht_pin, sensor=sensor_name).set(sensor_humidity)
         else:
             print(datetime.now().strftime("%d/%m/%Y %H:%M:%S") + " Humidity from sensor is null.")
 
