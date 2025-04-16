@@ -1,0 +1,6 @@
+Lora:
+  Module: RF95  # Adafruit RFM9x
+  gpiochip: 0
+  Reset: 25
+  IRQ: 22
+  spidev: spidev0.1
