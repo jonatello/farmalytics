@@ -1,19 +1,20 @@
 #!/usr/bin/env python3
 """
 Usage:
-    python meshtastic_send.py file_path --ch_index CH_INDEX --chunk_size CHUNK_SIZE
+    python send_chunks.py file_path --chunk_size CHUNK_SIZE [--ch_index CH_INDEX] [--dest DEST]
 
 Arguments:
     file_path: Path to the text file containing the content to be chunked.
-    --ch_index: Channel index for the meshtastic command.
     --chunk_size: Maximum length of each chunk.
+    --ch_index: (Optional) Channel index for the meshtastic command.
+    --dest: (Optional) Destination for the meshtastic command.
 
 Examples:
-    python meshtastic_send.py combined_message.log --ch_index 6 --chunk_size 200
-    python meshtastic_send.py combined_message.log --ch_index 3 --chunk_size 150
+    python send_chunks.py combined_message.log --chunk_size 200 --ch_index 6 --dest 12345
+    python send_chunks.py combined_message.log --chunk_size 150
 
 Description:
-    This script reads the content of the specified text file, chunks it into strings with a maximum length specified by chunk_size, and executes the meshtastic command for each chunk. The meshtastic command sends each chunk as a text message to the specified channel index. Logging is used to record the processing of each chunk.
+    This script reads the content of the specified text file, chunks it into strings with a maximum length specified by chunk_size, and executes the meshtastic command for each chunk. The meshtastic command sends each chunk as a text message to the specified channel index and destination if provided. Logging is used to record the processing of each chunk.
 """
 
 import subprocess
@@ -49,18 +50,23 @@ def chunk_content(content, chunk_size):
     return [content[i:i+chunk_size] for i in range(0, len(content), chunk_size)]
 
 # Function to execute the command for each chunk
-def execute_command_for_chunks(chunks, ch_index):
+def execute_command_for_chunks(chunks, ch_index, dest):
     """
     Executes the meshtastic command for each chunk.
 
     Args:
         chunks (list): List of content chunks.
         ch_index (int): Channel index for the meshtastic command.
+        dest (str): Destination for the meshtastic command.
     """
     total_chunks = len(chunks)
     for i, chunk in enumerate(chunks, start=1):
-        # Construct the command with the current chunk and channel index
-        command = f'meshtastic --host --ch-index {ch_index} --ack --sendtext "{chunk}"'
+        # Construct the command with the current chunk, channel index, and destination
+        command = f'meshtastic --host --ack --sendtext "{chunk}"'
+        if ch_index is not None:
+            command += f' --ch-index {ch_index}'
+        if dest is not None:
+            command += f' --dest {dest}'
         # Execute the command using subprocess
         subprocess.run(command, shell=True)
         # Log the progress
@@ -70,10 +76,12 @@ def execute_command_for_chunks(chunks, ch_index):
 parser = argparse.ArgumentParser(description="Chunk file content and execute command for each chunk.")
 # Add argument for the file path
 parser.add_argument("file_path", help="Path to the text file")
-# Add argument for the channel index
-parser.add_argument("--ch_index", type=int, required=True, help="Channel index for the meshtastic command")
 # Add argument for the chunk size
 parser.add_argument("--chunk_size", type=int, default=200, help="Maximum length of each chunk")
+# Add optional argument for the channel index
+parser.add_argument("--ch_index", type=int, help="Channel index for the meshtastic command")
+# Add optional argument for the destination
+parser.add_argument("--dest", type=str, help="Destination for the meshtastic command")
 # Parse the arguments
 args = parser.parse_args()
 
@@ -87,4 +95,4 @@ file_content = read_file(args.file_path)
 chunks = chunk_content(file_content, args.chunk_size)
 
 # Execute the command for each chunk
-execute_command_for_chunks(chunks, args.ch_index)
+execute_command_for_chunks(chunks, args.ch_index, args.dest)
