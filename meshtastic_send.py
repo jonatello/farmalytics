@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Usage:
-    python send_chunks.py file_path --chunk_size CHUNK_SIZE [--ch_index CH_INDEX] [--dest DEST]
+    python meshtastic_send.py file_path --chunk_size CHUNK_SIZE [--ch_index CH_INDEX] [--dest DEST]
 
 Arguments:
     file_path: Path to the text file containing the content to be chunked.
@@ -10,8 +10,8 @@ Arguments:
     --dest: (Optional) Destination for the meshtastic command.
 
 Examples:
-    python send_chunks.py combined_message.log --chunk_size 200 --ch_index 6 --dest 12345
-    python send_chunks.py combined_message.log --chunk_size 150
+    python meshtastic_send.py combined_message.log --chunk_size 200 --ch_index 6 --dest 12345
+    python meshtastic_send.py combined_message.log --chunk_size 150
 
 Description:
     This script reads the content of the specified text file, chunks it into strings with a maximum length specified by chunk_size, and executes the meshtastic command for each chunk. The meshtastic command sends each chunk as a text message to the specified channel index and destination if provided. Logging is used to record the processing of each chunk.
