@@ -1,24 +1,23 @@
 #!/usr/bin/env python3
 """
 Usage:
-    python send_chunks.py file_path --ch_index CH_INDEX
+    python meshtastic_send.py file_path --ch_index CH_INDEX
 
 Arguments:
     file_path: Path to the text file containing the content to be chunked.
     --ch_index: Channel index for the meshtastic command.
 
 Examples:
-    python send_chunks.py combined_message.log --ch_index 6
-    python send_chunks.py combined_message.log --ch_index 3
+    python meshtastic_send.py combined_message.log --ch_index 6
+    python meshtastic_send.py combined_message.log --ch_index 3
 
 Description:
-    This script reads the content of the specified text file, chunks it into strings with a maximum length of 200 characters, and executes the meshtastic command for each chunk. The meshtastic command sends each chunk as a text message to the specified channel index. A progress bar is displayed to show the progress of the loop execution, and logging is used to record the processing of each chunk.
+    This script reads the content of the specified text file, chunks it into strings with a maximum length of 200 characters, and executes the meshtastic command for each chunk. The meshtastic command sends each chunk as a text message to the specified channel index. Logging is used to record the processing of each chunk.
 """
 
 import subprocess
 import argparse
 import logging
-from tqdm import tqdm
 
 # Function to read the content of the file
 def read_file(file_path):
@@ -57,7 +56,7 @@ def execute_command_for_chunks(chunks, ch_index):
         chunks (list): List of content chunks.
         ch_index (int): Channel index for the meshtastic command.
     """
-    for chunk in tqdm(chunks, desc="Processing chunks"):
+    for chunk in chunks:
         # Construct the command with the current chunk and channel index
         command = f'meshtastic --host --ch-index {ch_index} --ack --sendtext "{chunk}"'
         # Execute the command using subprocess
