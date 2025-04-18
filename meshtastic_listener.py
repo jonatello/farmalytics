@@ -1,10 +1,23 @@
 #!/usr/bin/env python3
+"""
+Usage:
+    python3 your_script.py --sender_node_id SENDER_NODE_ID --run_time RUN_TIME
+
+Arguments:
+    --sender_node_id: The ID of the sender node to filter messages from.
+    --run_time: The time (in minutes) for the script to run before terminating.
+
+Examples:
+    python3 your_script.py --sender_node_id "6209a0bd" --run_time 5
+"""
+
 import logging
 from logging.handlers import TimedRotatingFileHandler
 import json
 from meshtastic.tcp_interface import TCPInterface
 from pubsub import pub
 import time
+import argparse
 
 # =============================================================================
 # Configure logging with timed rotation
@@ -30,13 +43,6 @@ debug_handler.setFormatter(formatter)
 logger.addHandler(info_handler)
 logger.addHandler(debug_handler)
 logger.propagate = False  # Prevent duplicate messages being logged by the root logger
-
-# =============================================================================
-# Set the expected sender node ID for filtering incoming messages.
-# Only messages from this node ID will be logged; others will be ignored.
-# Node IDs are often prefixed with special characters like "!" in packets.
-# =============================================================================
-SENDER_NODE_ID = "6209a0bd"  # You can change this to filter messages from a different node
 
 # =============================================================================
 # Function to handle incoming messages
@@ -120,8 +126,20 @@ except Exception as e:
 # =============================================================================
 print("Listening for incoming messages... Press Ctrl+C to exit.")
 
+# Set up argument parser
+parser = argparse.ArgumentParser(description="Meshtastic message listener.")
+parser.add_argument("--sender_node_id", required=True, help="The ID of the sender node to filter messages from.")
+parser.add_argument("--run_time", type=int, required=True, help="The time (in minutes) for the script to run before terminating.")
+args = parser.parse_args()
+
+# Set the expected sender node ID for filtering incoming messages
+SENDER_NODE_ID = args.sender_node_id
+
+# Calculate the end time based on the run time parameter
+end_time = time.time() + args.run_time * 60
+
 try:
-    while True:
+    while time.time() < end_time:
         # Sleep for 30 seconds and print a heartbeat to confirm script activity
         time.sleep(30)
         print("Still running...")
