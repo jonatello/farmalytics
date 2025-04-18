@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Usage:
-    python3 your_script.py log_file [--start_time "YYYY-MM-DD HH:MM:SS"] [--end_time "YYYY-MM-DD HH:MM:SS"] [--output_file output_file] [--log_level log_level]
+    python3 meshtastic_input.py log_file [--start_time "YYYY-MM-DD HH:MM:SS"] [--end_time "YYYY-MM-DD HH:MM:SS"] [--output_file output_file] [--log_level log_level]
 
 Arguments:
     log_file: Path to the log file containing JSON messages.
@@ -13,11 +13,11 @@ Optional Arguments:
     --log_level: Logging level (default: INFO).
 
 Examples:
-    python3 your_script.py received_messages.log
-    python3 your_script.py received_messages.log --start_time "2025-04-17 12:00:00" --end_time "2025-04-18 12:00:00"
-    python3 your_script.py received_messages.log --output_file "custom_output.log"
-    python3 your_script.py received_messages.log --log_level "DEBUG"
-    python3 your_script.py received_messages.log --start_time "2025-04-17 12:00:00" --end_time "2025-04-18 12:00:00" --output_file "custom_output.log" --log_level "DEBUG"
+    python3 meshtastic_input.py received_messages.log
+    python3 meshtastic_input.py received_messages.log --start_time "2025-04-17 12:00:00" --end_time "2025-04-18 12:00:00"
+    python3 meshtastic_input.py received_messages.log --output_file "custom_output.log"
+    python3 meshtastic_input.py received_messages.log --log_level "DEBUG"
+    python3 meshtastic_input.py received_messages.log --start_time "2025-04-17 12:00:00" --end_time "2025-04-18 12:00:00" --output_file "custom_output.log" --log_level "DEBUG"
 """
 
 import json
