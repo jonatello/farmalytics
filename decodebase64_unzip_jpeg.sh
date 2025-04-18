@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Set variables
-base64_image_path="base64_image.gz"
+base64_image_path="combined_message.log"
 zipped_image_path="compressed_image.gz"
 restored_image_path="restored.jpg"
 
