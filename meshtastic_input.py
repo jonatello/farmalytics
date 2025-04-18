@@ -116,7 +116,7 @@ if __name__ == "__main__":
     result = read_and_concatenate_text(args.log_file, start_time_epoch, end_time_epoch)
 
     if result:
-        print(result)
+        #print(result)
         # Write the result to a new file
         try:
             with open(args.output_file, "w") as output_file:
