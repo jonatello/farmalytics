@@ -51,7 +51,7 @@ def onReceive(packet, interface):
     """
     Callback triggered when a packet is received.
     Logs detailed information about the message, including metadata and decoded content,
-    in JSON format. Ignores messages not sent by the expected sender node.
+    in JSON format. Ignores messages not sent by the expected sender node or if the port is not TEXT_MESSAGE_APP.
     """
     # Safely retrieve the sender ID, defaulting to "<Unknown Sender>" if missing
     raw_sender_id = packet.get("fromId")
@@ -94,8 +94,8 @@ def onReceive(packet, interface):
         "RXRSSI": rx_rssi
     }
 
-    # Log and print if the sender matches the expected node ID
-    if sender_id == SENDER_NODE_ID:
+    # Log and print if the sender matches the expected node ID and port is TEXT_MESSAGE_APP
+    if sender_id == SENDER_NODE_ID and portnum == "TEXT_MESSAGE_APP":
         # Log the message in JSON format
         logger.info(json.dumps(log_data, indent=4))
         for h in logger.handlers:
@@ -103,7 +103,7 @@ def onReceive(packet, interface):
         print("Logged message:", json.dumps(log_data, indent=4))  # Print for console monitoring
     else:
         # Only print ignored messages to the console
-        print(f"Message from other node ignored: SenderID={sender_id}")
+        print(f"Message from other node or port ignored: SenderID={sender_id}, Port={portnum}")
 
 # =============================================================================
 # Subscribe to incoming messages published on the "meshtastic.receive" topic
@@ -134,10 +134,8 @@ args = parser.parse_args()
 
 # Set the expected sender node ID for filtering incoming messages
 SENDER_NODE_ID = args.sender_node_id
-
 # Calculate the end time based on the run time parameter
 end_time = time.time() + args.run_time * 60
-
 try:
     while time.time() < end_time:
         # Sleep for 30 seconds and print a heartbeat to confirm script activity
