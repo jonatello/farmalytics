@@ -15,10 +15,11 @@ def read_and_concatenate_text(log_file, start_time, end_time):
         str: Concatenated Text values from filtered log entries.
     """
     concatenated_texts = []  # Use a list to accumulate text values
-    current_entry = ""  # Buffer for multiline JSON
 
     try:
         with open(log_file, 'r') as file:
+            current_entry = ""  # Buffer for multiline JSON
+
             for line in file:
                 line = line.strip()
                 if not line:  # Skip empty lines
@@ -29,17 +30,15 @@ def read_and_concatenate_text(log_file, start_time, end_time):
                 if line.endswith("}"):  # JSON object ends
                     try:
                         log_entry = json.loads(current_entry)  # Parse JSON
-                        rx_time = log_entry.get("RXTime", None)
-                        text = log_entry.get("Text", None)
+                        rx_time = log_entry.get("RXTime")
+                        text = log_entry.get("Text")
 
                         # Filter entries within the specified timeframe
-                        if rx_time is not None and start_time <= int(rx_time) <= end_time:
-                            if text:
-                                concatenated_texts.append(text)  # Add text to the list
+                        if rx_time and start_time <= int(rx_time) <= end_time and text:
+                            concatenated_texts.append(text)  # Add text to the list
 
                     except json.JSONDecodeError:
-                        # Skip malformed entries
-                        pass
+                        print(f"Malformed entry: {current_entry}")
                     finally:
                         current_entry = ""  # Reset buffer after processing
 
@@ -47,6 +46,10 @@ def read_and_concatenate_text(log_file, start_time, end_time):
         return "".join(concatenated_texts)
 
     except FileNotFoundError:
+        print(f"Error: The file '{log_file}' was not found.")
+        return ""
+    except Exception as e:
+        print(f"Error: An unexpected error occurred: {e}")
         return ""
 
 if __name__ == "__main__":
@@ -62,5 +65,11 @@ if __name__ == "__main__":
 
     if result:
         print(result)
+        # Write the result to a new file
+        try:
+            with open("combined_message.log", "w") as output_file:
+                output_file.write(result)
+        except Exception as e:
+            print(f"Error: Could not write to 'combined_message.log': {e}")
     else:
         print("No messages found within the specified timeframe.")
