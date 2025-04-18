@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
 Usage:
-    python3 your_script.py --sender_node_id SENDER_NODE_ID --run_time RUN_TIME
+    python3 meshtastic_listener.py --sender_node_id SENDER_NODE_ID --run_time RUN_TIME
 
 Arguments:
     --sender_node_id: The ID of the sender node to filter messages from.
     --run_time: The time (in minutes) for the script to run before terminating.
 
 Examples:
-    python3 your_script.py --sender_node_id "6209a0bd" --run_time 5
+    python3 meshtastic_listener.py --sender_node_id "6209a0bd" --run_time 5
 """
 
 import logging
