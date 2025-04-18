@@ -37,31 +37,31 @@ def read_and_concatenate_text(log_file, start_time, end_time):
     Returns:
         str: Concatenated Text values from filtered log entries.
     """
-    concatenated_texts = []  # Use a list to accumulate text values
+    concatenated_texts = []  # List to accumulate text values
 
     try:
         with open(log_file, 'r') as file:
             current_entry = ""  # Buffer for multiline JSON
 
             for line in file:
-                line = line.strip()
+                line = line.strip()  # Remove leading/trailing whitespace
                 if not line:  # Skip empty lines
                     continue
 
                 # Accumulate lines for a single JSON object
                 current_entry += line
-                if line.endswith("}"):  # JSON object ends
+                if line.endswith("}"):  # Check if JSON object ends
                     try:
                         log_entry = json.loads(current_entry)  # Parse JSON
-                        rx_time = log_entry.get("RXTime")
-                        text = log_entry.get("Text")
+                        rx_time = log_entry.get("RXTime")  # Get RXTime value
+                        text = log_entry.get("Text")  # Get Text value
 
                         # Filter entries within the specified timeframe
                         if rx_time and start_time <= int(rx_time) <= end_time and text:
                             concatenated_texts.append(text)  # Add text to the list
 
                     except json.JSONDecodeError:
-                        logging.warning(f"Malformed entry: {current_entry}")
+                        logging.warning(f"Malformed entry: {current_entry}")  # Log warning for malformed entry
                     finally:
                         current_entry = ""  # Reset buffer after processing
 
@@ -69,10 +69,10 @@ def read_and_concatenate_text(log_file, start_time, end_time):
         return "".join(concatenated_texts)
 
     except FileNotFoundError:
-        logging.error(f"Error: The file '{log_file}' was not found.")
+        logging.error(f"Error: The file '{log_file}' was not found.")  # Log error if file not found
         return ""
     except Exception as e:
-        logging.error(f"Error: An unexpected error occurred: {e}")
+        logging.error(f"Error: An unexpected error occurred: {e}")  # Log any other unexpected errors
         return ""
 
 def parse_time(time_str):
@@ -88,8 +88,9 @@ def parse_time(time_str):
     try:
         return int(datetime.strptime(time_str, "%Y-%m-%d %H:%M:%S").timestamp())
     except ValueError:
-        logging.error(f"Error: Invalid time format '{time_str}'. Use 'YYYY-MM-DD HH:MM:SS'.")
+        logging.error(f"Error: Invalid time format '{time_str}'. Use 'YYYY-MM-DD HH:MM:SS'.")  # Log error for invalid time format
         raise
+
 if __name__ == "__main__":
     # Set up argument parser
     parser = argparse.ArgumentParser(description="Process log file and concatenate messages.")
@@ -121,6 +122,6 @@ if __name__ == "__main__":
             with open(args.output_file, "w") as output_file:
                 output_file.write(result)
         except Exception as e:
-            logging.error(f"Error: Could not write to '{args.output_file}': {e}")
+            logging.error(f"Error: Could not write to '{args.output_file}': {e}")  # Log error if writing to file fails
     else:
         print("No messages found within the specified timeframe.")
