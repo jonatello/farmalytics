@@ -49,10 +49,10 @@ def chunk_content(content, chunk_size):
     """
     return [content[i:i+chunk_size] for i in range(0, len(content), chunk_size)]
 
-# Function to execute the command for each chunk
+# Function to execute the command for each chunk with retry mechanism
 def execute_command_for_chunks(chunks, ch_index, dest):
     """
-    Executes the meshtastic command for each chunk.
+    Executes the meshtastic command for each chunk with retry mechanism.
 
     Args:
         chunks (list): List of content chunks.
@@ -67,10 +67,23 @@ def execute_command_for_chunks(chunks, ch_index, dest):
             command += f' --ch-index {ch_index}'
         if dest is not None:
             command += f' --dest {dest}'
-        # Execute the command using subprocess
-        subprocess.run(command, shell=True)
-        # Log the progress
-        logging.info(f"Processed chunk {i} of {total_chunks}: {chunk[:50]}...")
+        
+        # Retry mechanism
+        retries = 0
+        max_retries = 10
+        while retries < max_retries:
+            try:
+                # Execute the command using subprocess
+                result = subprocess.run(command, shell=True, check=True, capture_output=True, text=True)
+                # Log the progress
+                logging.info(f"Processed chunk {i} of {total_chunks}: {chunk[:50]}...")
+                break
+            except subprocess.CalledProcessError as e:
+                retries += 1
+                logging.warning(f"Retry {retries}/{max_retries} for chunk {i} due to error: {e}")
+                if retries == max_retries:
+                    logging.error(f"Aborting after {max_retries} retries for chunk {i}.")
+                    exit(1)
 
 # Set up argument parser
 parser = argparse.ArgumentParser(description="Chunk file content and execute command for each chunk.")
