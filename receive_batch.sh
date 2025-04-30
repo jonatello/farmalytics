@@ -9,6 +9,6 @@ python3 meshtastic_listener.py --sender_node_id "6209a0bd" --run_time 5
 python3 meshtastic_input.py received_messages.log
 
 # Decode and unzip the jpg
-decodebase64_unzip_jpeg.sh
+./decodebase64_unzip_jpeg.sh
 
 deactivate
