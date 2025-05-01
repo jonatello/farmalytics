@@ -43,7 +43,7 @@ def onReceive(packet, interface):
     raw_sender_id = packet.get("fromId")
     if raw_sender_id is None:
         raw_sender_id = "<Unknown Sender>"
-        logger.error("Received packet with no sender ID")
+        logger.debug("Received packet with no sender ID")
     else:
         raw_sender_id = raw_sender_id[1:] if raw_sender_id.startswith("!") else raw_sender_id
 
