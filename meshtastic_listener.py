@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """
 Usage:
-    python3 meshtastic_listener.py --sender_node_id SENDER_NODE_ID --run_time RUN_TIME
+    python3 meshtastic_listener.py --sender_node_id SENDER_NODE_ID --run_time RUN_TIME --log_file LOG_FILE
 
 Arguments:
     --sender_node_id: The ID of the sender node to filter messages from.
     --run_time: The time (in minutes) for the script to run before terminating.
+    --log_file: Path to the log file for outputting received messages.
 
 Examples:
-    python3 meshtastic_listener.py --sender_node_id "6209a0bd" --run_time 5
+    python3 meshtastic_listener.py --sender_node_id "6209a0bd" --run_time 5 --log_file "custom_log.log"
 """
 
 import logging
@@ -23,17 +24,6 @@ import argparse
 # =============================================================================
 logger = logging.getLogger("MeshtasticListener")
 logger.setLevel(logging.DEBUG)
-
-info_handler = logging.FileHandler("received_messages.log")
-debug_handler = logging.FileHandler("debug_messages.log")
-
-formatter = logging.Formatter('%(message)s')
-info_handler.setFormatter(formatter)
-debug_handler.setFormatter(formatter)
-
-logger.addHandler(info_handler)
-logger.addHandler(debug_handler)
-logger.propagate = False
 
 # =============================================================================
 # Function to handle incoming messages
@@ -107,10 +97,19 @@ print("Listening for incoming messages... Press Ctrl+C to exit.")
 parser = argparse.ArgumentParser(description="Meshtastic message listener.")
 parser.add_argument("--sender_node_id", required=True, help="The ID of the sender node to filter messages from.")
 parser.add_argument("--run_time", type=int, required=True, help="The time (in minutes) for the script to run before terminating.")
+parser.add_argument("--log_file", required=True, help="Path to the log file for outputting received messages.")
 args = parser.parse_args()
 
 SENDER_NODE_ID = args.sender_node_id
+LOG_FILE = args.log_file
 end_time = time.time() + args.run_time * 60
+
+# Set up logging with specified log file
+info_handler = logging.FileHandler(LOG_FILE)
+formatter = logging.Formatter('%(message)s')
+info_handler.setFormatter(formatter)
+logger.addHandler(info_handler)
+logger.propagate = False
 
 try:
     while time.time() < end_time:
