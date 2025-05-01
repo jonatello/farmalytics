@@ -12,7 +12,6 @@ Examples:
 """
 
 import logging
-from logging.handlers import TimedRotatingFileHandler
 import json
 from meshtastic.tcp_interface import TCPInterface
 from pubsub import pub
@@ -20,13 +19,13 @@ import time
 import argparse
 
 # =============================================================================
-# Configure logging with timed rotation
+# Configure logging without timed rotation
 # =============================================================================
 logger = logging.getLogger("MeshtasticListener")
 logger.setLevel(logging.DEBUG)
 
-info_handler = TimedRotatingFileHandler("received_messages.log", when='H', interval=1, backupCount=24)
-debug_handler = TimedRotatingFileHandler("debug_messages.log", when='H', interval=1, backupCount=24)
+info_handler = logging.FileHandler("received_messages.log")
+debug_handler = logging.FileHandler("debug_messages.log")
 
 formatter = logging.Formatter('%(message)s')
 info_handler.setFormatter(formatter)
