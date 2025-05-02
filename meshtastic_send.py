@@ -20,6 +20,8 @@ Description:
 import subprocess
 import argparse
 import logging
+import time
+
 # Function to read the content of the file
 def read_file(file_path):
     """
@@ -76,15 +78,17 @@ def execute_command_for_chunks(chunks, ch_index, dest):
             try:
                 # Execute the command using subprocess
                 result = subprocess.run(command, shell=True, check=True, capture_output=True, text=True)
-                # Log the progress
-                logging.info(f"Processed chunk {i} of {total_chunks}: {chunk[:50]}...")
+                # Log the successful transmission
+                logging.info(f"Successfully sent chunk {i} of {total_chunks}: {chunk[:50]}...")
                 debug_logger.info(f"Successfully sent chunk {i} of {total_chunks}: {chunk[:50]}...")
+                print(f"Successfully sent chunk {i} of {total_chunks}: {chunk[:50]}...")
                 break
             except subprocess.CalledProcessError as e:
                 retries += 1
                 failure_count += 1
                 logging.warning(f"Retry {retries}/{max_retries} for chunk {i} due to error: {e}")
                 debug_logger.warning(f"Retry {retries}/{max_retries} for chunk {i} due to error: {e}")
+                time.sleep(1)  # Adding a short delay before retrying
                 if retries == max_retries:
                     logging.error(f"Aborting after {max_retries} retries for chunk {i}.")
                     debug_logger.error(f"Aborting after {max_retries} retries for chunk {i}.")
@@ -115,6 +119,7 @@ debug_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
 debug_handler.setFormatter(debug_formatter)
 debug_logger.addHandler(debug_handler)
 debug_logger.setLevel(logging.DEBUG)
+debug_logger.propagate = False  # Prevent propagation to root logger
 
 # Read the content of the file
 file_content = read_file(args.file_path)
