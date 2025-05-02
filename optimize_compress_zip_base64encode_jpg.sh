@@ -28,7 +28,8 @@ initial_size=$(stat -c %s $image_path)
 echo "Initial file size: $initial_size bytes"
 
 # Optimize and compress JPEG image using jpegoptim and jpegtran
-jpegoptim --max=80 --strip-all $image_path
+# $1: Maximum quality factor for jpegoptim
+jpegoptim --max=$1 --strip-all $image_path
 check_success "jpegoptim"
 jpegtran -optimize -progressive -copy none -outfile $compressed_image_path $image_path
 check_success "jpegtran"
@@ -38,7 +39,8 @@ optimized_size=$(stat -c %s $compressed_image_path)
 echo "File size after optimization and compression: $optimized_size bytes"
 
 # Resize the image to smaller dimensions using ImageMagick
-convert $compressed_image_path -resize 800x600 $compressed_image_path
+# $2: Resize dimensions (e.g., 800x600)
+convert $compressed_image_path -resize $2 $compressed_image_path
 check_success "ImageMagick resize"
 
 # Get size after resizing
