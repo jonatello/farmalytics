@@ -2,8 +2,8 @@
 
 source meshtastic/bin/activate
 
-./optimize_compress_zip_base64encode_jpg.sh
+./optimize_compress_zip_base64encode_jpg.sh 80 400x300
 
-python3 meshtastic_send.py base64_image.gz --dest '!6209a0bd' --chunk_size 63
+python3 meshtastic_send.py base64_image.gz --dest '!47a78d36' --chunk_size 120
 
 deactivate
