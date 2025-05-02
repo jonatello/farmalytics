@@ -14,7 +14,10 @@ Examples:
     python meshtastic_send.py combined_message.log --chunk_size 150
 
 Description:
-    This script reads the content of the specified text file, chunks it into strings with a maximum length specified by chunk_size, and executes the meshtastic command for each chunk. The meshtastic command sends each chunk as a text message to the specified channel index and destination if provided. Logging is used to record the processing of each chunk.
+    This script reads the content of the specified text file, chunks it into strings with a maximum
+    length specified by chunk_size, and executes the meshtastic command for each chunk. The meshtastic
+    command sends each chunk as a text message to the specified channel index and destination if provided.
+    Logging is used to record the processing of each chunk.
 """
 
 import subprocess
@@ -77,55 +80,41 @@ def execute_command_for_chunks(chunks, ch_index, dest):
         while retries < max_retries:
             try:
                 # Execute the command using subprocess
-                result = subprocess.run(command, shell=True, check=True, capture_output=True, text=True)
-                # Log the successful transmission
-                logging.info(f"Successfully sent chunk {i} of {total_chunks}: {chunk[:50]}...")
-                debug_logger.info(f"Successfully sent chunk {i} of {total_chunks}: {chunk[:50]}...")
-                print(f"Successfully sent chunk {i} of {total_chunks}: {chunk[:50]}...")
+                subprocess.run(command, shell=True, check=True, capture_output=True, text=True)
+                # Log the successful transmission with a timestamp (will be output to both console and file)
+                logger.info(f"Successfully sent chunk {i} of {total_chunks}: {chunk[:50]}...")
                 break
             except subprocess.CalledProcessError as e:
                 retries += 1
                 failure_count += 1
-                logging.warning(f"Retry {retries}/{max_retries} for chunk {i} due to error: {e}")
-                debug_logger.warning(f"Retry {retries}/{max_retries} for chunk {i} due to error: {e}")
+                logger.warning(f"Retry {retries}/{max_retries} for chunk {i} due to error: {e}")
                 time.sleep(1)  # Adding a short delay before retrying
                 if retries == max_retries:
-                    logging.error(f"Aborting after {max_retries} retries for chunk {i}.")
-                    debug_logger.error(f"Aborting after {max_retries} retries for chunk {i}.")
+                    logger.error(f"Aborting after {max_retries} retries for chunk {i}.")
                     exit(1)
     
-    debug_logger.info(f"Total failures/retries: {failure_count}")
+    logger.info(f"Total failures/retries: {failure_count}")
 
 # Set up argument parser
 parser = argparse.ArgumentParser(description="Chunk file content and execute command for each chunk.")
-# Add argument for the file path
 parser.add_argument("file_path", help="Path to the text file")
-# Add argument for the chunk size
 parser.add_argument("--chunk_size", type=int, default=200, help="Maximum length of each chunk")
-# Add optional argument for the channel index
 parser.add_argument("--ch_index", type=int, help="Channel index for the meshtastic command")
-# Add optional argument for the destination
 parser.add_argument("--dest", type=str, help="Destination for the meshtastic command")
-# Parse the arguments
 args = parser.parse_args()
 
-# Set up logging
+# Set up logging so that messages appear with a timestamp on the terminal...
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+logger = logging.getLogger()
 
-# Set up debug logging
-debug_logger = logging.getLogger("DebugLogger")
-debug_handler = logging.FileHandler("debug_messages.log")
-debug_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-debug_handler.setFormatter(debug_formatter)
-debug_logger.addHandler(debug_handler)
-debug_logger.setLevel(logging.DEBUG)
-debug_logger.propagate = False  # Prevent propagation to root logger
+# ...and also to a file ('debug_messages.log') by adding an extra file handler
+file_handler = logging.FileHandler("debug_messages.log")
+file_formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+file_handler.setFormatter(file_formatter)
+file_handler.setLevel(logging.DEBUG)
+logger.addHandler(file_handler)
 
-# Read the content of the file
+# Read the content of the file, chunk it, and execute the command for each chunk
 file_content = read_file(args.file_path)
-
-# Chunk the content into strings with a maximum length specified by chunk_size
 chunks = chunk_content(file_content, args.chunk_size)
-
-# Execute the command for each chunk
 execute_command_for_chunks(chunks, args.ch_index, args.dest)
