@@ -28,7 +28,6 @@ with open('$restored_image_path', 'wb') as f_out:
 "
 check_success "Python unzipping"
 
-#rm $base64_image_path
 rm $zipped_image_path
 
 # Display the size of the restored image
