@@ -1,56 +1,54 @@
 #!/usr/bin/env python3
 """
 Usage:
-    python3 meshtastic_input.py log_file [--start_time "YYYY-MM-DD HH:MM:SS"]
-        [--end_time "YYYY-MM-DD HH:MM:SS"] [--output_file output_file] [--log_level log_level]
+    python3 meshtastic_input.py log_file [--output_file output_file] [--log_level log_level] [--filter_header FILTER_HEADER]
 
 Arguments:
     log_file: Path to the log file containing JSON messages.
 
 Optional Arguments:
-    --start_time: Start time in 'YYYY-MM-DD HH:MM:SS' format (default: 24 hours ago).
-    --end_time: End time in 'YYYY-MM-DD HH:MM:SS' format (default: current time).
     --output_file: Path to the output file (default: combined_message.log).
     --log_level: Logging level (default: INFO).
+    --filter_header: Only process messages whose header (the substring up to and including the first "!")
+                     starts with this value. If not provided, all messages will be processed.
+                     Note: Messages that consist solely of a header (with no content after "!") are skipped.
 
 Examples:
     python3 meshtastic_input.py received_messages.log
-    python3 meshtastic_input.py received_messages.log --start_time "2025-04-17 12:00:00" --end_time "2025-04-18 12:00:00"
     python3 meshtastic_input.py received_messages.log --output_file "custom_output.log"
     python3 meshtastic_input.py received_messages.log --log_level "DEBUG"
-    python3 meshtastic_input.py received_messages.log --start_time "2025-04-17 12:00:00" \
-        --end_time "2025-04-18 12:00:00" --output_file "custom_output.log" --log_level "DEBUG"
+    python3 meshtastic_input.py received_messages.log --filter_header "ab"
 """
 
 import json
 import argparse
 import logging
-from datetime import datetime, timedelta
 import re
 import sys
 
 # Create a module-level logger.
 logger = logging.getLogger("MeshtasticInput")
 
+# Global variable for header filter (if provided).
+FILTER_HEADER = None
 
-def read_and_concatenate_text(log_file, start_time, end_time):
+def read_and_concatenate_text(log_file):
     """
     Reads logged messages from a file, extracts the JSON portions from log entries,
-    filters by timeframe (using RXTime), and concatenates the "Text" values.
+    processes the "Text" field by removing its header (if present) using "!" as the delimiter,
+    and concatenates the resulting message content.
     
-    The log file is assumed to be in the format produced by the logger:
-      <timestamp> - <LEVEL> - <JSON message>
-    The JSON message may span multiple lines.
+    If --filter_header is provided, only messages whose header (up to and including the first "!")
+    starts with that value are included.
     
     Args:
         log_file (str): Path to the log file.
-        start_time (int): Start time (epoch seconds).
-        end_time (int): End time (epoch seconds).
     
     Returns:
-        str: Concatenated Text values from filtered JSON entries.
+        str: Concatenated message content from filtered JSON entries.
     """
-    # This pattern expects log lines starting with a timestamp, level and then a message.
+    # Pattern matching a log entry line in our logger's format:
+    # "YYYY-MM-DD HH:MM:SS,mmm - LEVEL - <JSON message>"
     header_pattern = re.compile(
         r'^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3} - (INFO|DEBUG|WARNING|ERROR) - (.*)$'
     )
@@ -58,71 +56,74 @@ def read_and_concatenate_text(log_file, start_time, end_time):
     concatenated_texts = []
     current_entry = ""
 
+    def process_entry(entry):
+        """
+        Attempts to decode the JSON entry and extract its "Text" field.
+        - If the text contains "!", splits the string at the first "!".
+          Everything up to and including "!" is considered the header and is removed.
+          If the remaining content is empty, the entry is skipped.
+        - If --filter_header is provided, then - for entries with a header - only messages
+          whose header starts with that value are kept.
+        - If no "!" is found in the text, the entire text is returned.
+        """
+        try:
+            log_entry = json.loads(entry)
+        except json.JSONDecodeError:
+            logger.warning(f"Malformed JSON entry skipped: {entry}")
+            return None
+
+        text = log_entry.get("Text")
+        if not text:
+            return None
+
+        if "!" in text:
+            header_part, content = text.split("!", 1)
+            header = header_part + "!"
+            content = content.strip()
+            if not content:
+                # Skip messages that consist only of a header.
+                return None
+            if FILTER_HEADER is not None:
+                if not header.startswith(FILTER_HEADER):
+                    return None
+            return content
+        else:
+            # If no header delimiter is found, return the entire text.
+            return text
+
     try:
         with open(log_file, 'r') as f:
             for line in f:
                 line = line.rstrip("\n")
                 m = header_pattern.match(line)
                 if m:
-                    # We have detected a new log entry.
+                    # Detected new log entry
                     if current_entry:
-                        # Process the previously accumulated JSON block.
-                        try:
-                            log_entry = json.loads(current_entry)
-                            rx_time = log_entry.get("RXTime")
-                            text = log_entry.get("Text")
-                            if rx_time and text:
-                                try:
-                                    rx_time_int = int(rx_time)
-                                    if start_time <= rx_time_int <= end_time:
-                                        concatenated_texts.append(text)
-                                except ValueError:
-                                    logger.warning(f"Invalid RXTime value: {rx_time} in entry: {current_entry}")
-                        except json.JSONDecodeError:
-                            logger.warning(f"Malformed JSON entry skipped: {current_entry}")
+                        processed_text = process_entry(current_entry)
+                        if processed_text:
+                            concatenated_texts.append(processed_text)
                         current_entry = ""
-                    # Start a new JSON block using the portion after the header.
+                    # Start new entry using the JSON part of the line.
                     current_entry = m.group(2).strip()
                 else:
-                    # If the line doesn't match the header, assume it's a continuation of the current entry.
+                    # Continuation of a multi-line JSON message.
                     if current_entry:
                         current_entry += "\n" + line.strip()
                     else:
-                        # No current entry; skip line.
                         continue
 
-                # Optionally, if the current block seems finished (endswith a '}'), process it.
+                # If current entry appears complete, process it.
                 if current_entry.endswith("}"):
-                    try:
-                        log_entry = json.loads(current_entry)
-                        rx_time = log_entry.get("RXTime")
-                        text = log_entry.get("Text")
-                        if rx_time and text:
-                            try:
-                                rx_time_int = int(rx_time)
-                                if start_time <= rx_time_int <= end_time:
-                                    concatenated_texts.append(text)
-                            except ValueError:
-                                logger.warning(f"Invalid RXTime value: {rx_time} in entry: {current_entry}")
-                    except json.JSONDecodeError:
-                        logger.warning(f"Malformed JSON entry skipped: {current_entry}")
+                    processed_text = process_entry(current_entry)
+                    if processed_text:
+                        concatenated_texts.append(processed_text)
                     current_entry = ""
                     
-            # Process any leftover entry at EOF.
+            # Process any leftover entry.
             if current_entry:
-                try:
-                    log_entry = json.loads(current_entry)
-                    rx_time = log_entry.get("RXTime")
-                    text = log_entry.get("Text")
-                    if rx_time and text:
-                        try:
-                            rx_time_int = int(rx_time)
-                            if start_time <= rx_time_int <= end_time:
-                                concatenated_texts.append(text)
-                        except ValueError:
-                            logger.warning(f"Invalid RXTime value: {rx_time} in entry: {current_entry}")
-                except json.JSONDecodeError:
-                    logger.warning(f"Malformed JSON entry skipped: {current_entry}")
+                processed_text = process_entry(current_entry)
+                if processed_text:
+                    concatenated_texts.append(processed_text)
         
         return "".join(concatenated_texts)
 
@@ -134,47 +135,18 @@ def read_and_concatenate_text(log_file, start_time, end_time):
         return ""
 
 
-def parse_time(time_str):
-    """
-    Parse a human-readable time string in 'YYYY-MM-DD HH:MM:SS' format into epoch seconds.
-    
-    Args:
-        time_str (str): Time string.
-    
-    Returns:
-        int: Corresponding epoch seconds.
-    """
-    try:
-        dt = datetime.strptime(time_str, "%Y-%m-%d %H:%M:%S")
-        return int(dt.timestamp())
-    except ValueError as ve:
-        logger.error(f"Invalid time format '{time_str}'. Use 'YYYY-MM-DD HH:MM:SS'.")
-        raise ve
-
-
 def main():
     # Set up command-line argument parsing.
-    parser = argparse.ArgumentParser(description="Process a log file and concatenate filtered messages.")
+    parser = argparse.ArgumentParser(
+        description="Process a log file and concatenate filtered messages (with headers removed)."
+    )
     parser.add_argument("log_file", help="Path to the log file containing JSON messages.")
+    parser.add_argument("--output_file", help="Path to the output file", default="combined_message.log")
+    parser.add_argument("--log_level", help="Logging level (e.g., DEBUG, INFO)", default="INFO")
     parser.add_argument(
-        "--start_time",
-        help="Start time in 'YYYY-MM-DD HH:MM:SS' format",
-        default=(datetime.utcnow() - timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S")
-    )
-    parser.add_argument(
-        "--end_time",
-        help="End time in 'YYYY-MM-DD HH:MM:SS' format",
-        default=datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-    )
-    parser.add_argument(
-        "--output_file",
-        help="Path to the output file",
-        default="combined_message.log"
-    )
-    parser.add_argument(
-        "--log_level",
-        help="Logging level (e.g., DEBUG, INFO)",
-        default="INFO"
+        "--filter_header",
+        help="Filter for a specific header prefix. Only messages whose header (the substring up to and including the first '!') starts with this value are processed.",
+        default=None
     )
     
     args = parser.parse_args()
@@ -192,16 +164,13 @@ def main():
     logger.addHandler(console_handler)
     
     logger.info(f"Processing log file: {args.log_file}")
-    logger.info(f"Filtering messages from {args.start_time} to {args.end_time}")
+    if args.filter_header:
+        logger.info(f"Filtering only messages with header starting with: '{args.filter_header}'")
     
-    try:
-        start_epoch = parse_time(args.start_time)
-        end_epoch = parse_time(args.end_time)
-    except ValueError:
-        parser.error("Invalid time format provided. Use 'YYYY-MM-DD HH:MM:SS'.")
+    global FILTER_HEADER
+    FILTER_HEADER = args.filter_header  # Set the module-level filter header.
     
-    # Process the log file and get concatenated text.
-    result = read_and_concatenate_text(args.log_file, start_epoch, end_epoch)
+    result = read_and_concatenate_text(args.log_file)
     
     if result:
         try:
@@ -212,8 +181,8 @@ def main():
             logger.error(f"Could not write to '{args.output_file}': {e}")
             sys.exit(1)
     else:
-        logger.info("No messages found within the specified timeframe.")
-        print("No messages found within the specified timeframe.")
+        logger.info("No messages found that match the filtering criteria.")
+        print("No messages found that match the filtering criteria.")
 
 
 if __name__ == "__main__":
