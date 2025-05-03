@@ -75,7 +75,7 @@ def send_random_chunk(chunk, ch_index, dest, connection_mode, max_retries, send_
     elif connection_mode == 'serial':
         command.append('--serial')
     if send_verbose:
-        # Use the supported debug flag instead of --verbose.
+        # Use the supported debug flag (instead of --verbose) so that extra output from meshtastic is provided.
         command.append('--debug')
     command.extend(['--ack', '--sendtext', chunk])
     if ch_index is not None:
@@ -86,13 +86,16 @@ def send_random_chunk(chunk, ch_index, dest, connection_mode, max_retries, send_
     retries = 0
     while retries < max_retries:
         try:
-            subprocess.run(command, check=True, capture_output=True, text=True)
+            result = subprocess.run(command, check=True, capture_output=True, text=True)
             logger.info(f"Successfully sent chunk of size {len(chunk)} (Attempt {retries+1}/{max_retries})")
             return (True, retries)
         except subprocess.CalledProcessError as e:
             retries += 1
-            error_output = e.stderr.strip() if e.stderr else str(e)
-            logger.warning(f"Retry {retries}/{max_retries} for chunk size {len(chunk)} due to error: {error_output}")
+            # Log the full command, the exit code, stdout and stderr.
+            err_msg = (f"Command '{' '.join(command)}' failed with exit code {e.returncode}. "
+                       f"STDOUT: {e.stdout.strip() if e.stdout else 'None'}, "
+                       f"STDERR: {e.stderr.strip() if e.stderr else 'None'}")
+            logger.warning(f"Retry {retries}/{max_retries} for chunk size {len(chunk)} due to error: {err_msg}")
             time.sleep(2 ** retries)  # Exponential backoff
     logger.error(f"Failed to send chunk size {len(chunk)} after {max_retries} retries.")
     return (False, retries)
