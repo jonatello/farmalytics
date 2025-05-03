@@ -5,7 +5,7 @@ MeshtasticSend - Split and send file content via Meshtastic
 Usage:
     python3 meshtastic_send.py file_path --chunk_size CHUNK_SIZE [--ch_index CH_INDEX]
        [--dest DEST] [--connection CONNECTION] [--asynchronous HEADER]
-       [--max_retries MAX_RETRIES] [--backoff_factor BACKOFF_FACTOR]
+       [--max_retries MAX_RETRIES] [--retry_delay RETRY_DELAY]
 
 Examples:
     python3 meshtastic_send.py combined_message.log --chunk_size 200 --ch_index 6 --dest '!47a78d36' --connection tcp
@@ -17,12 +17,14 @@ Description:
     and sends each chunk using a Meshtastic command.
     
     It logs details of each send attempt—including retries with detailed error info—
-    and prints a final summary with timing and file size information.
+    and prints a final summary with timing, file size, and calculated transmission speed.
     
     Synchronous (default) mode sends messages one after the other, preserving order.
     In asynchronous mode (enabled via the --asynchronous option), the supplied header template
     is used to prepend a unique header (with a numeric counter) to each message, and all messages
     are sent concurrently in any order.
+    
+    Instead of an exponential backoff, a constant retry delay (in seconds) is used between retry attempts.
 """
 
 import argparse
@@ -32,14 +34,12 @@ import logging
 import subprocess
 import sys
 import time
-import random
-import string
 from pathlib import Path
 import re
 
 # Constants for defaults.
 DEFAULT_MAX_RETRIES = 10
-DEFAULT_BACKOFF_FACTOR = 2
+DEFAULT_RETRY_DELAY = 1  # seconds between retries
 
 def setup_logging():
     """Configure console (INFO+) and file (DEBUG) logging and return the logger."""
@@ -66,7 +66,7 @@ class MeshtasticSender:
     """
     def __init__(self, file_path: Path, chunk_size: int, ch_index: int, dest: str,
                  connection: str, max_retries: int = DEFAULT_MAX_RETRIES,
-                 backoff_factor: int = DEFAULT_BACKOFF_FACTOR,
+                 retry_delay: int = DEFAULT_RETRY_DELAY,
                  asynchronous_header: str = None):
         self.file_path = file_path
         self.chunk_size = chunk_size
@@ -74,7 +74,7 @@ class MeshtasticSender:
         self.dest = dest
         self.connection = connection.lower()
         self.max_retries = max_retries
-        self.backoff_factor = backoff_factor
+        self.retry_delay = retry_delay
         self.async_header = asynchronous_header  # if set, async mode is active
 
     def read_file(self) -> str:
@@ -143,7 +143,7 @@ class MeshtasticSender:
                     attempt += 1
                     total_failures += 1
                     self.log_retry_error(command, e, attempt)
-                    time.sleep(self.backoff_factor ** attempt)
+                    time.sleep(self.retry_delay)
                     if attempt == self.max_retries:
                         logger.error(f"Aborting after {self.max_retries} retries for chunk {i}.")
                         sys.exit(1)
@@ -198,7 +198,7 @@ class MeshtasticSender:
             except subprocess.CalledProcessError as e:
                 attempt += 1
                 self.log_retry_error(command, e, attempt)
-                await asyncio.sleep(self.backoff_factor ** attempt)
+                await asyncio.sleep(self.retry_delay)
                 if attempt == self.max_retries:
                     logger.error(f"Aborting after {self.max_retries} retries for async chunk with header '{header}'.")
                     sys.exit(1)
@@ -235,8 +235,8 @@ def main():
                              "If no '#' is present, a default 4-digit counter and an exclamation mark will be appended.")
     parser.add_argument("--max_retries", type=int, default=DEFAULT_MAX_RETRIES,
                         help=f"Maximum number of retries per chunk (default: {DEFAULT_MAX_RETRIES})")
-    parser.add_argument("--backoff_factor", type=int, default=DEFAULT_BACKOFF_FACTOR,
-                        help=f"Exponential backoff factor (default: {DEFAULT_BACKOFF_FACTOR})")
+    parser.add_argument("--retry_delay", type=int, default=DEFAULT_RETRY_DELAY,
+                        help=f"Number of seconds to wait between retries (default: {DEFAULT_RETRY_DELAY})")
     args = parser.parse_args()
 
     file_path = Path(args.file_path)
@@ -247,14 +247,14 @@ def main():
         dest=args.dest,
         connection=args.connection,
         max_retries=args.max_retries,
-        backoff_factor=args.backoff_factor,
+        retry_delay=args.retry_delay,
         asynchronous_header=args.asynchronous
     )
 
     start_time = time.time()
     file_content = sender.read_file()
     file_size = sender.get_file_size()
-    base64_data = sender.encode_file_base64(file_content)  # This is computed but no longer shown.
+    _ = sender.encode_file_base64(file_content)  # Computed but not used in the summary.
     chunks = sender.chunk_content(file_content)
 
     if args.asynchronous:
@@ -266,6 +266,8 @@ def main():
     elapsed_seconds = end_time - start_time
     formatted_elapsed = time.strftime("%H:%M:%S", time.gmtime(elapsed_seconds))
     total_attempts = total_chunks + total_failures
+    # Calculate transmission speed in bytes per second.
+    speed = file_size / elapsed_seconds if elapsed_seconds > 0 else file_size
 
     summary = (
         "----- Execution Summary -----\n"
@@ -275,6 +277,7 @@ def main():
         f"Total Chunks Sent:   {total_chunks}\n"
         f"Total Attempts:      {total_attempts} (includes {total_failures} retries)\n"
         f"Initial File Size:   {file_size} bytes\n"
+        f"Transmission Speed:  {speed:.2f} bytes/second\n"
         "------------------------------"
     )
     logger.info(summary)
