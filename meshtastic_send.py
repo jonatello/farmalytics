@@ -23,11 +23,12 @@ Description:
     
     In synchronous (default) mode, messages are sent one after the other, preserving order.
     If the flag --asynchronous is given, asynchronous mode is enabled, and all messages are
-    sent concurrently.  The maximum number of concurrent tasks is limited by the --max_concurrent_tasks parameter.
+    sent concurrently. The maximum number of concurrent tasks is limited by the --max_concurrent_tasks parameter.
     
-    Additionally, if a header is supplied via --header, that header is prepended to each chunk.
-    The header numbering is computed using the minimal number of digits required given the total number of chunks.
-    The asynchronous log messages now also include “chunk x/y” in addition to the attempt number.
+    Additionally, if a header is supplied via --header, that header is prepended to each message.
+    The header numbering is computed using the minimal number of digits required given the total number of chunks,
+    unless the header template includes '#' placeholders.  
+    Asynchronous log messages now also include "chunk x/y, attempt x/y, x remaining chunks".
 """
 
 import argparse
@@ -109,30 +110,25 @@ class MeshtasticSender:
         Generate a header for chunk 'index' based on the header template.
         If no header_template is provided, returns an empty string.
         
-        If the header template contains '#' characters, use them as placeholders.
-        Otherwise, compute minimal digit width based on total_chunks.
+        If the header template contains '#' characters, they are used as placeholders.
+        Otherwise, compute the minimal digit width based on total_chunks.
         The final header always ends with an exclamation mark.
         """
         if not self.header_template:
             return ""
-        # If template contains '#' use those placeholders.
         if '#' in self.header_template:
             pattern = re.compile(r"(#+)")
             match = pattern.search(self.header_template)
             if match:
                 width = len(match.group(0))
-                # Use the provided placeholder width.
                 counter_str = f"{index:0{width}d}"
                 header = pattern.sub(counter_str, self.header_template, count=1)
-                # Ensure header ends with '!'
                 if not header.endswith('!'):
                     header += "!"
                 return header
             else:
-                # Should not occur.
                 return f"{self.header_template}{index}!"
         else:
-            # Compute minimal digit width based on total_chunks.
             width = len(str(total_chunks))
             header = f"{self.header_template}{index:0{width}d}!"
             return header
@@ -160,10 +156,7 @@ class MeshtasticSender:
         logger.warning(f"Retry {attempt}/{self.max_retries} returned exit status {e.returncode}. Details: {detailed_error}")
 
     def send_chunks_sync(self, chunks: list) -> tuple:
-        """
-        Synchronously send each chunk. If a header is provided, prepend it to each chunk
-        using minimal numbering based on total chunk count.
-        """
+        """Send all chunks synchronously."""
         total_chunks = len(chunks)
         total_failures = 0
         
@@ -179,8 +172,7 @@ class MeshtasticSender:
             while attempt < self.max_retries:
                 try:
                     subprocess.run(command, check=True, capture_output=True, text=True)
-                    logger.info(f"Successfully sent chunk {i}/{total_chunks} "
-                                f"with header '{header}' (Attempt {attempt+1}/{self.max_retries})")
+                    logger.info(f"Successfully sent chunk {i}/{total_chunks} with header '{header}' (Attempt {attempt+1}/{self.max_retries})")
                     break
                 except subprocess.CalledProcessError as e:
                     attempt += 1
@@ -199,7 +191,8 @@ class MeshtasticSender:
 
     async def send_chunk_async_with_header(self, chunk: str, header: str, index: int, total_chunks: int) -> int:
         """
-        Sends a chunk asynchronously with the provided header. Logs a message including "chunk x/y".
+        Sends a chunk asynchronously with the provided header.
+        Logs includes "chunk x/y, attempt x/y, and x remaining chunks".
         Returns the number of retries performed.
         """
         message = header + chunk
@@ -217,8 +210,8 @@ class MeshtasticSender:
                 stdout, stderr = await proc.communicate()
                 logger.debug(f"Command for header '{header}' finished with return code: {proc.returncode}")
                 if proc.returncode == 0:
-                    logger.info(f"Successfully sent async chunk with header '{header}' "
-                                f"(chunk {index}/{total_chunks}, Attempt {attempt+1}/{self.max_retries})")
+                    remaining = total_chunks - index
+                    logger.info(f"Successfully sent async chunk with header '{header}' (chunk {index}/{total_chunks}, Attempt {attempt+1}/{self.max_retries}, {remaining} remaining chunks)")
                     return attempt
                 else:
                     raise subprocess.CalledProcessError(proc.returncode, command, output=stdout, stderr=stderr)
@@ -232,10 +225,7 @@ class MeshtasticSender:
         return attempt
 
     async def send_chunks_async(self, chunks: list) -> tuple:
-        """
-        Asynchronously send all chunks concurrently, limiting to a maximum number of tasks.
-        Uses the header template (if provided) to prepend headers generated with minimal numbering.
-        """
+        """Asynchronously send all chunks with concurrency limited by a semaphore."""
         total_chunks = len(chunks)
         sem = asyncio.Semaphore(self.max_concurrent_tasks)
         tasks = []
@@ -244,7 +234,6 @@ class MeshtasticSender:
                 header = self.generate_header(i, total_chunks)
             else:
                 header = ""
-            # Pass index and total_chunks to log the chunk information.
             task = asyncio.create_task(self.limited_send_chunk(chunk, header, sem, i, total_chunks))
             tasks.append(task)
         results = await asyncio.gather(*tasks)
@@ -264,8 +253,7 @@ def main():
                         help="Enable asynchronous mode")
     parser.add_argument("--header", type=str,
                         help="Header template to prepend to each message. Use '#' to indicate digit placeholders. "
-                             "If not specified, no header is prepended. If specified without '#', the minimal digit width "
-                             "based on total chunks is used.")
+                             "If not specified, no header is prepended. If specified without '#', minimal digit width is used based on total chunks.")
     parser.add_argument("--max_retries", type=int, default=DEFAULT_MAX_RETRIES,
                         help=f"Maximum number of retries per chunk (default: {DEFAULT_MAX_RETRIES})")
     parser.add_argument("--retry_delay", type=int, default=DEFAULT_RETRY_DELAY,
@@ -291,7 +279,7 @@ def main():
     start_time = time.time()
     file_content = sender.read_file()
     file_size = sender.get_file_size()
-    _ = sender.encode_file_base64(file_content)  # Computed but not used in summary.
+    _ = sender.encode_file_base64(file_content)  # computed but not used in summary.
     chunks = sender.chunk_content(file_content)
 
     if args.asynchronous:
