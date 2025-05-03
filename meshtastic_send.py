@@ -5,13 +5,14 @@ MeshtasticSend - Split and send file content via a persistent Meshtastic connect
 Usage:
     python3 meshtastic_send.py file_path --chunk_size CHUNK_SIZE [--ch_index CH_INDEX]
        [--dest DEST] [--connection CONNECTION] [--header HEADER] [--ack]
-       [--max_retries MAX_RETRIES] [--retry_delay RETRY_DELAY]
+       [--max_retries MAX_RETRIES] [--retry_delay RETRY_DELAY] [--sleep_delay SLEEP_DELAY]
 
 Examples:
     python3 meshtastic_send.py combined_message.log --chunk_size 200 --ch_index 6 --dest '!47a78d36' --connection tcp
     python3 meshtastic_send.py combined_message.log --chunk_size 150 --connection serial
     python3 meshtastic_send.py combined_message.log --chunk_size 150 --header ab --connection tcp
     python3 meshtastic_send.py combined_message.log --chunk_size 150 --ack --header ab --connection tcp
+    python3 meshtastic_send.py combined_message.log --chunk_size 150 --sleep_delay 1 --ack --header ab --connection tcp
 
 Description:
     This script reads the content of the specified text file, splits it into chunks,
@@ -24,8 +25,11 @@ Description:
     Without any '#' placeholders, the script computes the minimal digit width 
     based on the total number of chunks.
     
-    By default, ACK mode is not used (i.e. the underlying API is called with wantAck=False).
+    By default, ACK mode is not used (i.e. sendText is called with wantAck=False).
     Use the --ack flag to enable ACK mode (i.e. call sendText with wantAck=True).
+    
+    In addition, a sleep delay between sending chunks is introduced. The delay defaults
+    to 1 second and can be adjusted via the --sleep_delay parameter.
     
     Messages are sent sequentially over the persistent connection.
 """
@@ -45,6 +49,7 @@ from meshtastic.serial_interface import SerialInterface
 # Constants for defaults.
 DEFAULT_MAX_RETRIES = 10
 DEFAULT_RETRY_DELAY = 1  # seconds between retries
+DEFAULT_SLEEP_DELAY = 1.0  # seconds between sends
 
 def setup_logging():
     logger = logging.getLogger("MeshtasticSender")
@@ -72,7 +77,8 @@ class PersistentMeshtasticSender:
     Uses a persistent connection (TCP or Serial) to send data over Meshtastic.
     
     This class reads a file, splits it into chunks, and sends each chunk
-    over a single established connection. It supports optional header generation and retries.
+    over a single established connection. It supports optional header generation,
+    retries, and an arbitrary sleep delay between each send.
     
     By default, ACK mode is off (wantAck=False). When the --ack flag is provided,
     sendText is called with wantAck=True.
@@ -80,7 +86,7 @@ class PersistentMeshtasticSender:
     def __init__(self, file_path: Path, chunk_size: int, ch_index: int, dest: str,
                  connection: str, max_retries: int = DEFAULT_MAX_RETRIES,
                  retry_delay: int = DEFAULT_RETRY_DELAY, header_template: str = None,
-                 use_ack: bool = False):
+                 use_ack: bool = False, sleep_delay: float = DEFAULT_SLEEP_DELAY):
         self.file_path = file_path
         self.chunk_size = chunk_size
         self.ch_index = ch_index
@@ -90,6 +96,7 @@ class PersistentMeshtasticSender:
         self.retry_delay = retry_delay
         self.header_template = header_template
         self.use_ack = use_ack
+        self.sleep_delay = sleep_delay
 
     def read_file(self) -> str:
         try:
@@ -194,7 +201,7 @@ class PersistentMeshtasticSender:
         return attempt
 
     def send_all_chunks(self):
-        """Reads file content, splits it into chunks, and sends each chunk sequentially."""
+        """Reads file content, splits it into chunks, sends each chunk sequentially, with a delay between each send."""
         file_content = self.read_file()
         chunks = self.chunk_content(file_content)
         total_chunks = len(chunks)
@@ -203,6 +210,7 @@ class PersistentMeshtasticSender:
         for i, chunk in enumerate(chunks, start=1):
             failures = self.send_chunk(chunk, i, total_chunks)
             total_failures += failures
+            time.sleep(self.sleep_delay)
         return total_chunks, total_failures
 
 def main():
@@ -216,11 +224,14 @@ def main():
     parser.add_argument("--header", type=str,
                         help="Header template to prepend to each message. Use '#' for digit placeholders. "
                              "If not specified, no header is prepended.")
-    parser.add_argument("--ack", action="store_true", help="Enable ACK mode (i.e. sendText with wantAck=True)")
+    parser.add_argument("--ack", action="store_true",
+                        help="Enable ACK mode (i.e. call sendText with wantAck=True)")
     parser.add_argument("--max_retries", type=int, default=DEFAULT_MAX_RETRIES,
                         help=f"Maximum number of retries per chunk (default: {DEFAULT_MAX_RETRIES})")
     parser.add_argument("--retry_delay", type=int, default=DEFAULT_RETRY_DELAY,
                         help=f"Seconds to wait between retries (default: {DEFAULT_RETRY_DELAY})")
+    parser.add_argument("--sleep_delay", type=float, default=DEFAULT_SLEEP_DELAY,
+                        help=f"Seconds to sleep between sending chunks (default: {DEFAULT_SLEEP_DELAY})")
     args = parser.parse_args()
 
     file_path = Path(args.file_path)
@@ -233,7 +244,8 @@ def main():
         max_retries=args.max_retries,
         retry_delay=args.retry_delay,
         header_template=args.header,
-        use_ack=args.ack
+        use_ack=args.ack,
+        sleep_delay=args.sleep_delay
     )
 
     start_time = time.time()
