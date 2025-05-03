@@ -8,7 +8,7 @@ Usage:
 
 Arguments:
     --initial_chunk_size   Starting chunk size (default: 100)
-    --success_threshold    Number of consecutive successful transmissions required
+    --success_threshold    Number of consecutive successful transmissions required 
                            before increasing the chunk size (default: 3)
     --increment            Amount to increase chunk size when threshold is met (default: 50)
     --max_chunk_size       Maximum allowed chunk size (default: 240)
@@ -23,8 +23,9 @@ Description:
     Each message's length equals the current chunk size. After a number of consecutive
     successful sends (default 3) for a given chunk size, the program increases the chunk size
     by a set increment (default 50) but up to a maximum value (default 240). If a transmission 
-    fails, the consecutive success count is reset. The script runs for a fixed amount of time,
-    and if interrupted via Ctrl+C, it will still print a summary.
+    fails, the consecutive success count is reset. The script runs for the designated total 
+    runtime, and if interrupted via Ctrl+C (or when the run_time is met) the script produces a 
+    summary including total attempts, failures, final chunk size, and elapsed time.
 """
 
 import subprocess
@@ -52,18 +53,18 @@ def generate_random_string(length):
 
 def send_random_chunk(chunk, ch_index, dest, connection_mode, max_retries):
     """
-    Attempts to send the provided chunk using a meshtastic command.
+    Attempts to send the provided chunk using the meshtastic command.
     Uses a retry mechanism with exponential backoff.
     
     Parameters:
         chunk (str): The message to send.
-        ch_index (int|None): Channel index.
-        dest (str|None): Destination.
+        ch_index (int|None): Optional channel index.
+        dest (str|None): Optional destination.
         connection_mode (str): 'tcp' or 'serial'
         max_retries (int): Maximum retries per transmission.
     
     Returns:
-        bool: True if the transmission was successful, False otherwise.
+        bool: True if transmission successful, False otherwise.
     """
     command = ['meshtastic']
     if connection_mode == 'tcp':
@@ -132,7 +133,7 @@ def main():
     
     try:
         while time.time() - start_time < run_time_seconds:
-            # Enforce maximum chunk size.
+            # Ensure we don't go above our maximum chunk size.
             if current_chunk_size > args.max_chunk_size:
                 current_chunk_size = args.max_chunk_size
             
@@ -140,12 +141,12 @@ def main():
             chunk = generate_random_string(current_chunk_size)
             total_attempts += 1
             logger.info(f"Attempting to send chunk of size {current_chunk_size} (Total attempt {total_attempts}).")
+            
             success = send_random_chunk(chunk, args.ch_index, args.dest, args.connection, args.max_retries)
             if success:
                 consecutive_success += 1
                 logger.info(f"Transmission successful; consecutive successes: {consecutive_success}.")
                 if consecutive_success >= args.success_threshold:
-                    # Increase chunk size if not at maximum.
                     if current_chunk_size < args.max_chunk_size:
                         new_size = current_chunk_size + args.increment
                         if new_size > args.max_chunk_size:
@@ -158,7 +159,7 @@ def main():
             else:
                 consecutive_success = 0
                 total_failures += 1
-            # Pause briefly between attempts.
+            # Brief pause between attempts.
             time.sleep(1)
     except KeyboardInterrupt:
         logger.info("Benchmark interrupted by user. Finalizing summary...")
