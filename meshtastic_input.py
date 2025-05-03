@@ -1,189 +1,119 @@
 #!/usr/bin/env python3
 """
-Usage:
-    python3 meshtastic_input.py log_file [--output_file output_file] [--log_level log_level] [--filter_header FILTER_HEADER]
+meshtastic_input.py
 
-Arguments:
-    log_file: Path to the log file containing JSON messages.
+This script reads a log file containing Meshtastic messages logged as JSON.
+It extracts the "Text" field from each JSON object. If a header filter is specified via --header,
+the script will:
+  1. Filter messages whose Text field starts with the given header followed by a numeric part and an exclamation mark.
+  2. Extract the numeric part and sort the messages numerically.
+  3. Remove the header portion from each message.
+  4. Concatenate the resulting message bodies and write them to an output file.
+  5. Print a summary showing the total messages found and, if using a header filter, any missing expected headers.
 
-Optional Arguments:
-    --output_file: Path to the output file (default: combined_message.log).
-    --log_level: Logging level (default: INFO).
-    --filter_header: Only process messages whose header (the substring up to and including the first "!")
-                     starts with this value. If not provided, all messages will be processed.
-                     Note: Messages that consist solely of a header (with no content after "!") are skipped.
-
-Examples:
-    python3 meshtastic_input.py received_messages.log
-    python3 meshtastic_input.py received_messages.log --output_file "custom_output.log"
-    python3 meshtastic_input.py received_messages.log --log_level "DEBUG"
-    python3 meshtastic_input.py received_messages.log --filter_header "ab"
+If no header filter is specified, the script concatenates all extracted Text fields and writes them to the output file.
 """
 
-import json
 import argparse
-import logging
 import re
 import sys
 
-# Create a module-level logger.
-logger = logging.getLogger("MeshtasticInput")
-
-# Global variable for header filter (if provided).
-FILTER_HEADER = None
-
-def read_and_concatenate_text(log_file):
+def extract_text_fields(file_content):
     """
-    Reads logged messages from a file, extracts the JSON portions from log entries,
-    processes the "Text" field by removing its header (if present) using "!" as the delimiter,
-    and concatenates the resulting message content.
-    
-    If --filter_header is provided, only messages whose header (up to and including the first "!")
-    starts with that value are included.
-    
-    Args:
-        log_file (str): Path to the log file.
-    
-    Returns:
-        str: Concatenated message content from filtered JSON entries.
+    Extract all JSON objects' "Text" field from the log content.
+    Uses a regex to search for the value of the "Text" key (which may span multiple lines).
     """
-    # Pattern matching a log entry line in our logger's format:
-    # "YYYY-MM-DD HH:MM:SS,mmm - LEVEL - <JSON message>"
-    header_pattern = re.compile(
-        r'^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3} - (INFO|DEBUG|WARNING|ERROR) - (.*)$'
-    )
-    
-    concatenated_texts = []
-    current_entry = ""
-
-    def process_entry(entry):
-        """
-        Attempts to decode the JSON entry and extract its "Text" field.
-        - If the text contains "!", splits the string at the first "!".
-          Everything up to and including "!" is considered the header and is removed.
-          If the remaining content is empty, the entry is skipped.
-        - If --filter_header is provided, then - for entries with a header - only messages
-          whose header starts with that value are kept.
-        - If no "!" is found in the text, the entire text is returned.
-        """
-        try:
-            log_entry = json.loads(entry)
-        except json.JSONDecodeError:
-            logger.warning(f"Malformed JSON entry skipped: {entry}")
-            return None
-
-        text = log_entry.get("Text")
-        if not text:
-            return None
-
-        if "!" in text:
-            header_part, content = text.split("!", 1)
-            header = header_part + "!"
-            content = content.strip()
-            if not content:
-                # Skip messages that consist only of a header.
-                return None
-            if FILTER_HEADER is not None:
-                if not header.startswith(FILTER_HEADER):
-                    return None
-            return content
-        else:
-            # If no header delimiter is found, return the entire text.
-            return text
-
-    try:
-        with open(log_file, 'r') as f:
-            for line in f:
-                line = line.rstrip("\n")
-                m = header_pattern.match(line)
-                if m:
-                    # Detected new log entry
-                    if current_entry:
-                        processed_text = process_entry(current_entry)
-                        if processed_text:
-                            concatenated_texts.append(processed_text)
-                        current_entry = ""
-                    # Start new entry using the JSON part of the line.
-                    current_entry = m.group(2).strip()
-                else:
-                    # Continuation of a multi-line JSON message.
-                    if current_entry:
-                        current_entry += "\n" + line.strip()
-                    else:
-                        continue
-
-                # If current entry appears complete, process it.
-                if current_entry.endswith("}"):
-                    processed_text = process_entry(current_entry)
-                    if processed_text:
-                        concatenated_texts.append(processed_text)
-                    current_entry = ""
-                    
-            # Process any leftover entry.
-            if current_entry:
-                processed_text = process_entry(current_entry)
-                if processed_text:
-                    concatenated_texts.append(processed_text)
-        
-        return "".join(concatenated_texts)
-
-    except FileNotFoundError:
-        logger.error(f"Error: The file '{log_file}' was not found.")
-        return ""
-    except Exception as e:
-        logger.error(f"Unexpected error while processing '{log_file}': {e}")
-        return ""
-
+    pattern = re.compile(r'"Text":\s*"(.+?)"', re.DOTALL)
+    return pattern.findall(file_content)
 
 def main():
-    # Set up command-line argument parsing.
     parser = argparse.ArgumentParser(
-        description="Process a log file and concatenate filtered messages (with headers removed)."
+        description="Sort Meshtastic messages by header numeric value, remove the headers, and write them to an output file."
     )
-    parser.add_argument("log_file", help="Path to the log file containing JSON messages.")
-    parser.add_argument("--output_file", help="Path to the output file", default="combined_message.log")
-    parser.add_argument("--log_level", help="Logging level (e.g., DEBUG, INFO)", default="INFO")
-    parser.add_argument(
-        "--filter_header",
-        help="Filter for a specific header prefix. Only messages whose header (the substring up to and including the first '!') starts with this value are processed.",
-        default=None
-    )
-    
+    parser.add_argument("file_path", help="Path to the input log file containing messages")
+    parser.add_argument("--header", type=str, default=None,
+                        help=("Header filter to use. Only messages whose Text field starts with "
+                              "this header followed by digits and an exclamation mark (e.g. 'ad01!') "
+                              "will be processed."))
+    parser.add_argument("--output", type=str, default="compiled_messages.log",
+                        help="Output file path for the concatenated messages (default: compiled_messages.log)")
     args = parser.parse_args()
-    
-    # Configure logging.
-    numeric_level = getattr(logging, args.log_level.upper(), None)
-    if not isinstance(numeric_level, int):
-        parser.error(f"Invalid log level: {args.log_level}")
-    logger.setLevel(numeric_level)
-    
-    console_handler = logging.StreamHandler()
-    formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
-    console_handler.setFormatter(formatter)
-    console_handler.setLevel(numeric_level)
-    logger.addHandler(console_handler)
-    
-    logger.info(f"Processing log file: {args.log_file}")
-    if args.filter_header:
-        logger.info(f"Filtering only messages with header starting with: '{args.filter_header}'")
-    
-    global FILTER_HEADER
-    FILTER_HEADER = args.filter_header  # Set the module-level filter header.
-    
-    result = read_and_concatenate_text(args.log_file)
-    
-    if result:
-        try:
-            with open(args.output_file, 'w') as output_file:
-                output_file.write(result)
-            logger.info(f"Concatenated text written to '{args.output_file}'.")
-        except Exception as e:
-            logger.error(f"Could not write to '{args.output_file}': {e}")
-            sys.exit(1)
-    else:
-        logger.info("No messages found that match the filtering criteria.")
-        print("No messages found that match the filtering criteria.")
 
+    # Read the input file.
+    try:
+        with open(args.file_path, "r") as f:
+            content = f.read()
+    except Exception as e:
+        sys.exit(f"Error reading file: {e}")
+
+    # Extract all "Text" fields.
+    texts = extract_text_fields(content)
+    if not texts:
+        print("No messages ('Text' fields) could be extracted from the file.")
+        sys.exit(0)
+    
+    concatenated_output = ""
+    
+    if args.header:
+        # Build a pattern to match messages starting with the header filter followed by digits and '!'
+        header_pat = re.compile(r"^" + re.escape(args.header) + r"(\d+)!")
+        matched = []
+        for text in texts:
+            stripped = text.strip()
+            m = header_pat.match(stripped)
+            if m:
+                try:
+                    num = int(m.group(1))
+                except ValueError:
+                    continue
+                matched.append((num, stripped))
+        if not matched:
+            print("No messages matching the header filter were found.")
+            sys.exit(0)
+  
+        # Sort messages by the numeric portion.
+        matched.sort(key=lambda tup: tup[0])
+        # Remove the header from each message. We do this by replacing the header pattern at the start with an empty string.
+        cleaned_messages = [re.sub(r"^" + re.escape(args.header) + r"\d+!", "", msg, count=1) for (_, msg) in matched]
+        concatenated_output = "\n".join(cleaned_messages)
+
+        total_found = len(cleaned_messages)
+        # Determine the digit width from the first match.
+        first_match = header_pat.match(matched[0][1])
+        width = len(first_match.group(1)) if first_match else 0
+        max_num = max(num for num, _ in matched)
+        expected = set(range(1, max_num + 1))
+        found = set(num for num, _ in matched)
+        missing = sorted(list(expected - found))
+        
+        summary_lines = [
+            "----- Summary -----",
+            f"Total messages found (after filtering): {total_found}",
+            f"Maximum header found: {args.header}{max_num:0{width}d}!"
+        ]
+        if missing:
+            missing_formatted = ", ".join(f"{args.header}{n:0{width}d}!" for n in missing)
+            summary_lines.append(f"Missing headers: {missing_formatted}")
+        else:
+            summary_lines.append("No missing headers found.")
+    else:
+        # No header filter provided; simply concatenate all extracted text fields.
+        concatenated_output = "\n".join(texts)
+        summary_lines = [
+            "----- Summary -----",
+            f"Total messages found: {len(texts)}"
+        ]
+    
+    # Write the concatenated output to the specified output file.
+    try:
+        with open(args.output, "w") as outfile:
+            outfile.write(concatenated_output)
+    except Exception as e:
+        sys.exit(f"Error writing output file: {e}")
+
+    # Print summary to terminal.
+    print("\n".join(summary_lines))
+    print(f"\nCompiled messages written to: {args.output}")
 
 if __name__ == "__main__":
     main()
