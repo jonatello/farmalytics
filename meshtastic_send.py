@@ -5,7 +5,7 @@ MeshtasticSend - Split and send file content via Meshtastic
 Usage:
     python3 meshtastic_send.py file_path --chunk_size CHUNK_SIZE [--ch_index CH_INDEX]
        [--dest DEST] [--connection CONNECTION] [--asynchronous] [--header HEADER]
-       [--max_retries MAX_RETRIES] [--retry_delay RETRY_DELAY]
+       [--noack] [--max_retries MAX_RETRIES] [--retry_delay RETRY_DELAY]
        [--max_concurrent_tasks MAX_CONCURRENT_TASKS]
 
 Examples:
@@ -13,6 +13,7 @@ Examples:
     python3 meshtastic_send.py combined_message.log --chunk_size 150 --connection serial
     python3 meshtastic_send.py combined_message.log --chunk_size 150 --asynchronous --header ab --connection tcp
     python3 meshtastic_send.py combined_message.log --chunk_size 150 --asynchronous --header ab## --max_concurrent_tasks 2 --connection tcp
+    python3 meshtastic_send.py combined_message.log --chunk_size 150 --noack --connection tcp
 
 Description:
     This script reads the content of the specified text file, splits it into chunks,
@@ -27,8 +28,11 @@ Description:
     
     Additionally, if a header is supplied via --header, that header is prepended to each message.
     The header numbering is computed using the minimal number of digits required given the total number of chunks,
-    unless the header template includes '#' placeholders.  
+    unless the header template includes '#' placeholders.
     Asynchronous log messages now also include "chunk x/y, attempt x/y, x remaining chunks".
+    
+    By default, the script uses ACK mode (adding the "--ack" flag) to ensure reliability.
+    Use the flag --noack to disable ACK mode if desired.
 """
 
 import argparse
@@ -71,13 +75,16 @@ class MeshtasticSender:
     The header numbering uses the minimal digit width (based on total chunk count) if no '#' is present.
     Asynchronous mode is enabled with the --asynchronous switch.
     Concurrency is limited by a semaphore.
+    
+    The script normally uses ACK mode (i.e. adds "--ack" to the command). Pass --noack to disable ACK mode.
     """
     def __init__(self, file_path: Path, chunk_size: int, ch_index: int, dest: str,
                  connection: str, max_retries: int = DEFAULT_MAX_RETRIES,
                  retry_delay: int = DEFAULT_RETRY_DELAY,
                  asynchronous_mode: bool = False,
                  header_template: str = None,
-                 max_concurrent_tasks: int = DEFAULT_MAX_CONCURRENT_TASKS):
+                 max_concurrent_tasks: int = DEFAULT_MAX_CONCURRENT_TASKS,
+                 use_ack: bool = True):
         self.file_path = file_path
         self.chunk_size = chunk_size
         self.ch_index = ch_index
@@ -88,6 +95,7 @@ class MeshtasticSender:
         self.asynchronous_mode = asynchronous_mode
         self.header_template = header_template  # may be None
         self.max_concurrent_tasks = max_concurrent_tasks
+        self.use_ack = use_ack
 
     def read_file(self) -> str:
         try:
@@ -111,7 +119,7 @@ class MeshtasticSender:
         If no header_template is provided, returns an empty string.
         
         If the header template contains '#' characters, they are used as placeholders.
-        Otherwise, compute the minimal digit width based on total_chunks.
+        Otherwise, compute minimal digit width based on total_chunks.
         The final header always ends with an exclamation mark.
         """
         if not self.header_template:
@@ -139,7 +147,9 @@ class MeshtasticSender:
             command.append('--host')
         elif self.connection == 'serial':
             command.append('--serial')
-        command.extend(['--ack', '--sendtext', text])
+        if self.use_ack:
+            command.append('--ack')
+        command.extend(['--sendtext', text])
         if self.ch_index is not None:
             command.extend(['--ch-index', str(self.ch_index)])
         if self.dest is not None:
@@ -192,7 +202,7 @@ class MeshtasticSender:
     async def send_chunk_async_with_header(self, chunk: str, header: str, index: int, total_chunks: int) -> int:
         """
         Sends a chunk asynchronously with the provided header.
-        Logs includes "chunk x/y, attempt x/y, and x remaining chunks".
+        Logs include "chunk x/y, attempt x/y, and x remaining chunks".
         Returns the number of retries performed.
         """
         message = header + chunk
@@ -254,6 +264,8 @@ def main():
     parser.add_argument("--header", type=str,
                         help="Header template to prepend to each message. Use '#' to indicate digit placeholders. "
                              "If not specified, no header is prepended. If specified without '#', minimal digit width is used based on total chunks.")
+    parser.add_argument("--noack", action="store_true",
+                        help="Disable ACK mode (by default, ACK mode is used)")
     parser.add_argument("--max_retries", type=int, default=DEFAULT_MAX_RETRIES,
                         help=f"Maximum number of retries per chunk (default: {DEFAULT_MAX_RETRIES})")
     parser.add_argument("--retry_delay", type=int, default=DEFAULT_RETRY_DELAY,
@@ -273,13 +285,14 @@ def main():
         retry_delay=args.retry_delay,
         asynchronous_mode=args.asynchronous,
         header_template=args.header,
-        max_concurrent_tasks=args.max_concurrent_tasks
+        max_concurrent_tasks=args.max_concurrent_tasks,
+        use_ack= not args.noack   # By default we use ACK; if --noack is set, then disable it.
     )
 
     start_time = time.time()
     file_content = sender.read_file()
     file_size = sender.get_file_size()
-    _ = sender.encode_file_base64(file_content)  # computed but not used in summary.
+    _ = sender.encode_file_base64(file_content)  # Computed but not used in summary.
     chunks = sender.chunk_content(file_content)
 
     if args.asynchronous:
