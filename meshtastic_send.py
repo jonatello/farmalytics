@@ -4,15 +4,15 @@ MeshtasticSend - Split and send file content via Meshtastic
 
 Usage:
     python3 meshtastic_send.py file_path --chunk_size CHUNK_SIZE [--ch_index CH_INDEX]
-       [--dest DEST] [--connection CONNECTION] [--asynchronous HEADER]
+       [--dest DEST] [--connection CONNECTION] [--asynchronous] [--header HEADER]
        [--max_retries MAX_RETRIES] [--retry_delay RETRY_DELAY]
        [--max_concurrent_tasks MAX_CONCURRENT_TASKS]
 
 Examples:
     python3 meshtastic_send.py combined_message.log --chunk_size 200 --ch_index 6 --dest '!47a78d36' --connection tcp
     python3 meshtastic_send.py combined_message.log --chunk_size 150 --connection serial
-    python3 meshtastic_send.py combined_message.log --chunk_size 150 --asynchronous ab## --connection tcp
-    python3 meshtastic_send.py combined_message.log --chunk_size 150 --asynchronous ab## --max_concurrent_tasks 4 --connection tcp
+    python3 meshtastic_send.py combined_message.log --chunk_size 150 --asynchronous --header ab --connection tcp
+    python3 meshtastic_send.py combined_message.log --chunk_size 150 --asynchronous --header ab## --max_concurrent_tasks 2 --connection tcp
 
 Description:
     This script reads the content of the specified text file, splits it into chunks,
@@ -21,12 +21,13 @@ Description:
     It logs details of each send attempt—including retries with detailed error info—
     and prints a final summary with timing, file size, and calculated transmission speed.
     
-    In synchronous (default) mode, messages are sent one after the other (order preserved).
-    In asynchronous mode (enabled via the --asynchronous option), the supplied header template
-    is used to prepend a unique header (with a numeric counter) to each message, and messages are
-    sent concurrently. The maximum number of concurrent tasks is limited by the --max_concurrent_tasks parameter.
+    In synchronous (default) mode, messages are sent one after the other, preserving order.
+    If the flag --asynchronous is given, asynchronous mode is enabled, and all messages are
+    sent concurrently.  The maximum number of concurrent tasks is limited by the --max_concurrent_tasks parameter.
     
-    Instead of exponential backoff, a constant retry delay is used (specified by --retry_delay).
+    Additionally, if a header is supplied via --header, that header is prepended to each chunk.
+    The header numbering is computed using the minimal number of digits required given the total number of chunks.
+    The asynchronous log messages now also include “chunk x/y” in addition to the attempt number.
 """
 
 import argparse
@@ -45,7 +46,7 @@ DEFAULT_RETRY_DELAY = 1  # seconds between retries
 DEFAULT_MAX_CONCURRENT_TASKS = 4
 
 def setup_logging():
-    """Configure console (INFO+) and file (DEBUG) logging and return the logger."""
+    """Configure console and file logging; console shows INFO+."""
     logger = logging.getLogger("MeshtasticSender")
     logger.setLevel(logging.DEBUG)
     formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
@@ -63,15 +64,18 @@ logger = setup_logging()
 
 class MeshtasticSender:
     """
-    Encapsulates file reading, content chunking, and sending via Meshtastic.
-    Supports both synchronous and asynchronous (concurrent) modes.
-    In async mode, a header template is used to prepend a unique header with a numeric counter.
-    The maximum number of concurrent asynchronous tasks is limited by a semaphore.
+    Handles file reading, chunking, and sending via Meshtastic.
+    Supports synchronous and asynchronous sending.
+    If a header template is provided (via --header), it is prepended to each message.
+    The header numbering uses the minimal digit width (based on total chunk count) if no '#' is present.
+    Asynchronous mode is enabled with the --asynchronous switch.
+    Concurrency is limited by a semaphore.
     """
     def __init__(self, file_path: Path, chunk_size: int, ch_index: int, dest: str,
                  connection: str, max_retries: int = DEFAULT_MAX_RETRIES,
                  retry_delay: int = DEFAULT_RETRY_DELAY,
-                 asynchronous_header: str = None,
+                 asynchronous_mode: bool = False,
+                 header_template: str = None,
                  max_concurrent_tasks: int = DEFAULT_MAX_CONCURRENT_TASKS):
         self.file_path = file_path
         self.chunk_size = chunk_size
@@ -80,11 +84,11 @@ class MeshtasticSender:
         self.connection = connection.lower()
         self.max_retries = max_retries
         self.retry_delay = retry_delay
-        self.async_header = asynchronous_header  # non-None enables async mode
+        self.asynchronous_mode = asynchronous_mode
+        self.header_template = header_template  # may be None
         self.max_concurrent_tasks = max_concurrent_tasks
 
     def read_file(self) -> str:
-        """Read file content using pathlib."""
         try:
             return self.file_path.read_text()
         except Exception as e:
@@ -92,22 +96,48 @@ class MeshtasticSender:
             sys.exit(1)
 
     def get_file_size(self) -> int:
-        """Return file size in bytes."""
         return self.file_path.stat().st_size
 
     def encode_file_base64(self, content: str) -> bytes:
-        """Return base64-encoded version of the content."""
         return base64.b64encode(content.encode('utf-8'))
 
     def chunk_content(self, content: str) -> list:
-        """Split content into chunks of length chunk_size."""
         return [content[i:i + self.chunk_size] for i in range(0, len(content), self.chunk_size)]
 
+    def generate_header(self, index: int, total_chunks: int) -> str:
+        """
+        Generate a header for chunk 'index' based on the header template.
+        If no header_template is provided, returns an empty string.
+        
+        If the header template contains '#' characters, use them as placeholders.
+        Otherwise, compute minimal digit width based on total_chunks.
+        The final header always ends with an exclamation mark.
+        """
+        if not self.header_template:
+            return ""
+        # If template contains '#' use those placeholders.
+        if '#' in self.header_template:
+            pattern = re.compile(r"(#+)")
+            match = pattern.search(self.header_template)
+            if match:
+                width = len(match.group(0))
+                # Use the provided placeholder width.
+                counter_str = f"{index:0{width}d}"
+                header = pattern.sub(counter_str, self.header_template, count=1)
+                # Ensure header ends with '!'
+                if not header.endswith('!'):
+                    header += "!"
+                return header
+            else:
+                # Should not occur.
+                return f"{self.header_template}{index}!"
+        else:
+            # Compute minimal digit width based on total_chunks.
+            width = len(str(total_chunks))
+            header = f"{self.header_template}{index:0{width}d}!"
+            return header
+
     def build_command(self, text: str) -> list:
-        """
-        Build the Meshtastic command list.
-        The text provided is the message to send.
-        """
         command = ['meshtastic']
         if self.connection == 'tcp':
             command.append('--host')
@@ -121,9 +151,6 @@ class MeshtasticSender:
         return command
 
     def log_retry_error(self, command: list, e: subprocess.CalledProcessError, attempt: int):
-        """
-        Log detailed error info on a retry attempt.
-        """
         detailed_error = (
             f"Command: {' '.join(command)}; "
             f"Exit code: {e.returncode}; "
@@ -133,17 +160,27 @@ class MeshtasticSender:
         logger.warning(f"Retry {attempt}/{self.max_retries} returned exit status {e.returncode}. Details: {detailed_error}")
 
     def send_chunks_sync(self, chunks: list) -> tuple:
-        """Send all chunks synchronously (sequentially)."""
+        """
+        Synchronously send each chunk. If a header is provided, prepend it to each chunk
+        using minimal numbering based on total chunk count.
+        """
         total_chunks = len(chunks)
         total_failures = 0
-
+        
         for i, chunk in enumerate(chunks, start=1):
-            command = self.build_command(chunk)
+            if self.header_template:
+                header = self.generate_header(i, total_chunks)
+                message = header + chunk
+            else:
+                message = chunk
+
+            command = self.build_command(message)
             attempt = 0
             while attempt < self.max_retries:
                 try:
                     subprocess.run(command, check=True, capture_output=True, text=True)
-                    logger.info(f"Successfully sent chunk {i}/{total_chunks}: {chunk[:50]}...")
+                    logger.info(f"Successfully sent chunk {i}/{total_chunks} "
+                                f"with header '{header}' (Attempt {attempt+1}/{self.max_retries})")
                     break
                 except subprocess.CalledProcessError as e:
                     attempt += 1
@@ -156,55 +193,32 @@ class MeshtasticSender:
         logger.info(f"Total failures/retries: {total_failures}")
         return total_chunks, total_failures
 
-    def generate_async_header(self, index: int) -> str:
-        """
-        Generate a header for a given chunk index based on the asynchronous header template.
-        
-        If the template contains '#' characters, they are replaced by a zero-padded counter,
-        with the number of digits determined by the number of consecutive '#' characters.
-        If no '#' is present, a default 4-digit counter and an exclamation mark are appended.
-        """
-        template = self.async_header
-        if '#' in template:
-            pattern = re.compile(r"(#+)")
-            match = pattern.search(template)
-            if match:
-                width = len(match.group(0))
-                counter_str = f"{index:0{width}d}"
-                header = pattern.sub(counter_str, template, count=1)
-                return header
-            else:
-                return f"{template}{index:04d}!"
-        else:
-            return f"{template}{index:04d}!"
-
-    async def limited_send_chunk(self, chunk: str, header: str, sem: asyncio.Semaphore) -> int:
-        """
-        Wrapper function that acquires the semaphore and sends a chunk asynchronously.
-        Returns the number of retries for that chunk.
-        """
+    async def limited_send_chunk(self, chunk: str, header: str, sem: asyncio.Semaphore, index: int, total_chunks: int) -> int:
         async with sem:
-            return await self.send_chunk_async_with_header(chunk, header)
+            return await self.send_chunk_async_with_header(chunk, header, index, total_chunks)
 
-    async def send_chunk_async_with_header(self, chunk: str, header: str) -> int:
+    async def send_chunk_async_with_header(self, chunk: str, header: str, index: int, total_chunks: int) -> int:
         """
-        Send a single chunk asynchronously.
-        The provided header is prepended to the chunk.
+        Sends a chunk asynchronously with the provided header. Logs a message including "chunk x/y".
         Returns the number of retries performed.
         """
         message = header + chunk
         command = self.build_command(message)
         attempt = 0
         while attempt < self.max_retries:
+            logger.debug(f"About to execute command: {' '.join(command)} (Attempt {attempt+1})")
             try:
                 proc = await asyncio.create_subprocess_exec(
                     *command,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE
                 )
+                logger.debug(f"Command launched for header '{header}', awaiting result...")
                 stdout, stderr = await proc.communicate()
+                logger.debug(f"Command for header '{header}' finished with return code: {proc.returncode}")
                 if proc.returncode == 0:
-                    logger.info(f"Successfully sent async chunk with header '{header}' (Attempt {attempt+1}/{self.max_retries})")
+                    logger.info(f"Successfully sent async chunk with header '{header}' "
+                                f"(chunk {index}/{total_chunks}, Attempt {attempt+1}/{self.max_retries})")
                     return attempt
                 else:
                     raise subprocess.CalledProcessError(proc.returncode, command, output=stdout, stderr=stderr)
@@ -219,16 +233,19 @@ class MeshtasticSender:
 
     async def send_chunks_async(self, chunks: list) -> tuple:
         """
-        Asynchronously send all chunks concurrently, limiting concurrency via a semaphore.
-        The asynchronous header template is used to generate a unique header for each chunk.
-        Order of sending is not preserved.
+        Asynchronously send all chunks concurrently, limiting to a maximum number of tasks.
+        Uses the header template (if provided) to prepend headers generated with minimal numbering.
         """
-        sem = asyncio.Semaphore(self.max_concurrent_tasks)
         total_chunks = len(chunks)
+        sem = asyncio.Semaphore(self.max_concurrent_tasks)
         tasks = []
         for i, chunk in enumerate(chunks, start=1):
-            header = self.generate_async_header(i)
-            task = asyncio.create_task(self.limited_send_chunk(chunk, header, sem))
+            if self.header_template:
+                header = self.generate_header(i, total_chunks)
+            else:
+                header = ""
+            # Pass index and total_chunks to log the chunk information.
+            task = asyncio.create_task(self.limited_send_chunk(chunk, header, sem, i, total_chunks))
             tasks.append(task)
         results = await asyncio.gather(*tasks)
         total_failures = sum(results)
@@ -236,23 +253,23 @@ class MeshtasticSender:
         return total_chunks, total_failures
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Send file content via Meshtastic with chunking."
-    )
+    parser = argparse.ArgumentParser(description="Send file content via Meshtastic with chunking.")
     parser.add_argument("file_path", help="Path to the text file")
     parser.add_argument("--chunk_size", type=int, default=200, help="Maximum length of each chunk")
     parser.add_argument("--ch_index", type=int, help="Channel index for the Meshtastic command")
     parser.add_argument("--dest", type=str, help="Destination for the Meshtastic command")
     parser.add_argument("--connection", type=str, choices=['tcp', 'serial'], default='tcp',
                         help="Connection mode: 'tcp' or 'serial'")
-    parser.add_argument("--asynchronous", type=str,
-                        help="Enable asynchronous mode with this header template. "
-                             "Use '#' to indicate digit placeholders (e.g., 'ab##' for two-digit counters). "
-                             "If no '#' is present, a default 4-digit counter and an exclamation mark will be appended.")
+    parser.add_argument("--asynchronous", action="store_true",
+                        help="Enable asynchronous mode")
+    parser.add_argument("--header", type=str,
+                        help="Header template to prepend to each message. Use '#' to indicate digit placeholders. "
+                             "If not specified, no header is prepended. If specified without '#', the minimal digit width "
+                             "based on total chunks is used.")
     parser.add_argument("--max_retries", type=int, default=DEFAULT_MAX_RETRIES,
                         help=f"Maximum number of retries per chunk (default: {DEFAULT_MAX_RETRIES})")
     parser.add_argument("--retry_delay", type=int, default=DEFAULT_RETRY_DELAY,
-                        help=f"Number of seconds to wait between retries (default: {DEFAULT_RETRY_DELAY})")
+                        help=f"Seconds to wait between retries (default: {DEFAULT_RETRY_DELAY})")
     parser.add_argument("--max_concurrent_tasks", type=int, default=DEFAULT_MAX_CONCURRENT_TASKS,
                         help=f"Maximum number of concurrent asynchronous tasks (default: {DEFAULT_MAX_CONCURRENT_TASKS})")
     args = parser.parse_args()
@@ -266,7 +283,8 @@ def main():
         connection=args.connection,
         max_retries=args.max_retries,
         retry_delay=args.retry_delay,
-        asynchronous_header=args.asynchronous,
+        asynchronous_mode=args.asynchronous,
+        header_template=args.header,
         max_concurrent_tasks=args.max_concurrent_tasks
     )
 
