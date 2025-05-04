@@ -6,25 +6,27 @@ This bot uses a persistent TCP connection (via Meshtastic’s API)
 to listen for incoming messages with node and channel filtering.
 When a message is received, the bot performs one of these actions:
 
-  • "hi!"       - Replies with "well hai!".
-  • "cpu!"      - Sends basic system/CPU info.
-  • "status!"   - Sends detailed node status (line-by-line).
-  • "sysinfo!"  - Sends general system info (line-by-line).
-  • "df!"       - Sends disk usage info.
-  • "temp!"     - Sends CPU temperature.
-  • "ip!"       - Sends the primary IP address.
-  • "mem!"      - Sends memory usage info.
-  • "joke!"     - Tells a random joke.
-  • "help!"     - Shows available commands (line-by-line).
-  • "ping!"     - Replies with "pong!".
-  • "time!"     - Sends the current local time.
-  • "fortune!"  - Sends a random fortune message.
-  • "dmesg!"    - Sends the last 5 kernel log messages (truncated if needed).
-  • "signal!"   - Lists up to 5 nearby nodes with active signals.
-  • "sendimage!<header>" - Executes the send_image.sh script using the provided <header> value.
-     (If no header value is provided, “nc” is used as the default.)
-  
-Shell-script commands (e.g. "sendimage!") close the interface, wait, then execute the command,
+  • "hi!"               - Replies with "well hai!".
+  • "cpu!"              - Sends basic system/CPU info.
+  • "status!"           - Sends detailed node status (line-by-line).
+  • "sysinfo!"          - Sends general system info (line-by-line).
+  • "df!"               - Sends disk usage info.
+  • "temp!"             - Sends CPU temperature.
+  • "ip!"               - Sends the primary IP address.
+  • "mem!"              - Sends memory info.
+  • "joke!"             - Tells a random joke.
+  • "help!"             - Shows available commands (line-by-line).
+  • "ping!"             - Replies with "pong!".
+  • "time!"             - Sends the current local time.
+  • "fortune!"          - Sends a random fortune message.
+  • "dmesg!"            - Sends the last 5 kernel log messages (truncated if too long).
+  • "signal!"           - Lists up to 5 nearby nodes with active signals.
+  • "sendimage!<query>" - Sends an image with parameters provided as a query string.
+                         For example:
+                         sendimage!header=myHeader&chunk_size=200&resize=1024x768&quality=90
+                         Defaults: header=nc, chunk_size=180, resize=800x600, quality=75
+
+Shell-script commands close the interface, wait, then execute;
 after which the connection is re‑established.
 
 Usage:
@@ -43,29 +45,27 @@ import os
 import shutil
 import socket
 import random
+from urllib.parse import parse_qs
 
 # Import Meshtastic TCP interface and pubsub mechanism.
 from meshtastic.tcp_interface import TCPInterface
 from pubsub import pub
 
+# Import the send_image function from meshtastic_sender
+import meshtastic_sender
 
 # ---------------------- Logging Configuration ----------------------
 logger = logging.getLogger("MeshtasticBot")
 logger.setLevel(logging.DEBUG)
-formatter = logging.Formatter(
-    "%(asctime)s - %(filename)s:%(lineno)d - %(levelname)s - %(message)s"
-)
+formatter = logging.Formatter("%(asctime)s - %(filename)s:%(lineno)d - %(levelname)s - %(message)s")
 console_handler = logging.StreamHandler()
 console_handler.setLevel(logging.INFO)
 console_handler.setFormatter(formatter)
 logger.addHandler(console_handler)
-file_handler = logging.handlers.RotatingFileHandler(
-    "meshtastic_bot.log", maxBytes=1024 * 1024, backupCount=3
-)
+file_handler = logging.handlers.RotatingFileHandler("meshtastic_bot.log", maxBytes=1024 * 1024, backupCount=3)
 file_handler.setLevel(logging.DEBUG)
 file_handler.setFormatter(formatter)
 logger.addHandler(file_handler)
-
 
 # ---------------------- Utility Functions ----------------------
 def get_system_info():
@@ -79,9 +79,8 @@ def get_system_info():
         info.append("Load: N/A")
     return " | ".join(info)
 
-
 def get_general_sysinfo():
-    """Return general system info for 'sysinfo!'."""
+    """Return general system info for the 'sysinfo!' command."""
     uname = platform.uname()
     python_version = platform.python_version()
     return (
@@ -95,9 +94,8 @@ def get_general_sysinfo():
         f"  Python:    {python_version}"
     )
 
-
 def get_disk_info():
-    """Return disk usage info for 'df!'."""
+    """Return disk usage info for the 'df!' command."""
     try:
         total, used, free = shutil.disk_usage("/")
         total_gb = total / (1024 ** 3)
@@ -112,7 +110,6 @@ def get_disk_info():
     except Exception as e:
         return f"Error retrieving disk info: {e}"
 
-
 def get_cpu_temp():
     """Return CPU temperature for 'temp!'."""
     try:
@@ -122,7 +119,6 @@ def get_cpu_temp():
             return f"CPU Temperature: {temp_c:.1f}°C"
     except Exception as e:
         return f"Error reading CPU temperature: {e}"
-
 
 def get_ip_address():
     """Return primary IP address for 'ip!'."""
@@ -134,7 +130,6 @@ def get_ip_address():
         return f"IP Address: {ip}"
     except Exception as e:
         return f"Error determining IP address: {e}"
-
 
 def get_mem_info():
     """Return memory info for 'mem!' from /proc/meminfo."""
@@ -154,7 +149,6 @@ def get_mem_info():
     except Exception as e:
         return f"Error retrieving memory info: {e}"
 
-
 def get_random_joke():
     """Return a random joke for 'joke!'."""
     jokes = [
@@ -165,36 +159,33 @@ def get_random_joke():
     ]
     return random.choice(jokes)
 
-
 def get_help_text():
     """Return help text listing all available commands."""
     return (
         "Available commands:\n"
-        "  hi!       - Greets you back\n"
-        "  cpu!      - Basic system/CPU info\n"
-        "  status!   - Detailed node status (line-by-line)\n"
-        "  sysinfo!  - General system info (line-by-line)\n"
-        "  df!       - Disk usage info\n"
-        "  temp!     - CPU temperature\n"
-        "  ip!       - IP address\n"
-        "  mem!      - Memory info\n"
-        "  joke!     - Tell a random joke\n"
-        "  help!     - Show this help message\n"
-        "  ping!     - Replies with pong!\n"
-        "  time!     - Current local time\n"
-        "  fortune!  - A random fortune message\n"
-        "  dmesg!    - Last 5 kernel log messages (truncated if too long)\n"
-        "  signal!   - Lists up to 5 nearby nodes with active signals\n"
-        "  sendimage!<header> - Sends an image with the specified header (default: nc)\n"
-        "Shell-script commands (if configured): e.g., sendimage!"
+        "  hi!               - Greets you back\n"
+        "  cpu!              - Basic system/CPU info\n"
+        "  status!           - Detailed node status (line-by-line)\n"
+        "  sysinfo!          - General system info (line-by-line)\n"
+        "  df!               - Disk usage info\n"
+        "  temp!             - CPU temperature\n"
+        "  ip!               - IP address\n"
+        "  mem!              - Memory info\n"
+        "  joke!             - Tell a random joke\n"
+        "  help!             - Show this help message (line-by-line)\n"
+        "  ping!             - Replies with pong!\n"
+        "  time!             - Current local time\n"
+        "  fortune!          - A random fortune message\n"
+        "  dmesg!            - Last 5 kernel log messages (truncated if too long)\n"
+        "  signal!           - Lists up to 5 nearby nodes with active signals\n"
+        "  sendimage!header=myHeader&chunk_size=180&resize=800x600&quality=75\n"
+        "                    - Sends an image with query parameters; defaults as given."
     )
-
 
 def get_current_time():
     """Return current local time for 'time!'."""
     now = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
     return f"Current Time: {now}"
-
 
 def get_random_fortune():
     """Return a random fortune for 'fortune!'."""
@@ -207,12 +198,11 @@ def get_random_fortune():
     ]
     return random.choice(fortunes)
 
-
 def get_dmesg_info():
     """
     Return the last 5 lines from the kernel ring buffer for 'dmesg!'.
     If the output exceeds 200 characters, it is truncated.
-    Uses sudo in case elevated permission is required.
+    Uses sudo for elevated permission if necessary.
     """
     try:
         output = subprocess.check_output("sudo dmesg | tail -n 5", shell=True, universal_newlines=True)
@@ -225,12 +215,10 @@ def get_dmesg_info():
     except Exception as e:
         return f"Error retrieving dmesg output: {e}"
 
-
 def get_signal_info(interface):
     """
-    Return information about up to 5 nearby nodes with active signals from
-    the interface's node registry. A node is considered active if its "rssi"
-    value can be parsed as a number.
+    Return information about up to 5 nearby nodes with active signals from the
+    interface's node registry. A node is active if its "rssi" can be parsed as a number.
     """
     if not hasattr(interface, "nodes") or not interface.nodes:
         return "No nearby node signal data available."
@@ -254,7 +242,6 @@ def get_signal_info(interface):
         info_lines.append(f"Node {node_id} (nickname: {nickname}) - RSSI: {rssi}, Last Heard: {last_heard}")
     return "\n".join(info_lines)
 
-
 # ---------------------- Bot Class ----------------------
 class MeshtasticBot:
     def __init__(self, args):
@@ -262,7 +249,7 @@ class MeshtasticBot:
         self.args = args
         self.interface = None
         self.start_time = time.time()  # For uptime reporting
-        # Map shell-script commands (except sendimage! which is handled separately).
+        # Mapping of other shell-script commands; sendimage! is handled specially.
         self.COMMANDS = {
             "status": "./check_status.sh",
         }
@@ -418,13 +405,16 @@ class MeshtasticBot:
                         time.sleep(0.5)
                 return
 
-            # Handle the sendimage! command separately.
+            # Handle the sendimage! command using query-string style.
             if text.startswith("sendimage!"):
-                # Extract header parameter after the exclamation mark.
-                header_parameter = text[len("sendimage!"):].strip()
-                if not header_parameter:
-                    header_parameter = "nc"
-                logger.info("Received 'sendimage!' command with header: %s", header_parameter)
+                qs_string = text[len("sendimage!"):].strip()
+                params = parse_qs(qs_string)
+                header = params.get("header", ["nc"])[0]
+                chunk_size = params.get("chunk_size", ["180"])[0]
+                resize = params.get("resize", ["800x600"])[0]
+                quality = params.get("quality", ["75"])[0]
+                logger.info("Received 'sendimage!' command with parameters: header=%s, chunk_size=%s, resize=%s, quality=%s",
+                            header, chunk_size, resize, quality)
                 if self.interface:
                     try:
                         self.interface.close()
@@ -432,19 +422,14 @@ class MeshtasticBot:
                     except Exception as e:
                         logger.error("Error closing interface: %s", e)
                     self.interface = None
-                # Increase delay for resource cleanup.
                 time.sleep(5)
-                command = f"./send_image.sh {header_parameter}"
                 try:
-                    result = subprocess.run(command, shell=True, check=True,
-                                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                            universal_newlines=True)
-                    logger.info("send_image.sh output: %s", result.stdout)
-                except subprocess.CalledProcessError as e:
-                    logger.error("Error executing 'sendimage!' script: %s", e)
+                    meshtastic_sender.send_image(header, chunk_size, resize, quality)
+                    logger.info("send_image() executed successfully.")
+                except Exception as e:
+                    logger.error("Error executing send_image(): %s", e)
                 return
 
-            # Process any other shell-script commands from the COMMANDS mapping.
             for cmd, script in self.COMMANDS.items():
                 if text.startswith(cmd):
                     logger.info("Command '%s' recognized from node %s; executing script: %s", cmd, sender, script)
@@ -503,7 +488,6 @@ class MeshtasticBot:
                 except Exception as e:
                     logger.error("Error closing Meshtastic interface: %s", e)
 
-
 # ---------------------- Main Entry Point ----------------------
 def main():
     parser = argparse.ArgumentParser(
@@ -520,7 +504,6 @@ def main():
         args.channel_index = None
     bot = MeshtasticBot(args)
     bot.run()
-
 
 if __name__ == "__main__":
     main()
