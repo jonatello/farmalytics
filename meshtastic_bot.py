@@ -19,7 +19,7 @@ When a command is received, the bot performs actions including:
   • "ping!"             - Replies with "pong!".
   • "time!"             - Sends the current local time.
   • "fortune!"          - Sends a random fortune message.
-  • "dmesg!"            - Sends the last 5 kernel log messages (truncated if too long).
+  • "dmesg!"            - Sends the last 5 kernel log messages (truncated if needed).
   • "signal!"           - Lists up to 5 nearby nodes with active signals.
   • "sendimage!<query>" - Sends an image using query-string parameters.
         For example:
@@ -32,8 +32,8 @@ When a command is received, the bot performs actions including:
          ack=false, sleep_delay=1)
 
 For commands that trigger external processing (like sendimage!), the bot closes its
-Meshtastic interface, waits a few seconds for cleanup, then executes the sender
-module via a system call. The connection is then re‑established.
+Meshtastic interface, waits a few seconds for cleanup, then executes meshtastic_sender.py
+via a system call. The connection is then re‑established.
 """
 
 import time
@@ -52,8 +52,7 @@ from urllib.parse import parse_qs
 from meshtastic.tcp_interface import TCPInterface
 from pubsub import pub
 
-# We call the sender via an external invocation.
-# (No changes are made to meshtastic_sender.py.)
+# The sender logic remains in meshtastic_sender.py.
 SENDER_SCRIPT = "meshtastic_sender.py"
 
 # ---------------------- Logging Configuration ----------------------
@@ -71,7 +70,7 @@ logger.addHandler(file_handler)
 
 # ---------------------- Utility Functions ----------------------
 def get_system_info():
-    """Return basic system summary for the 'cpu!' command."""
+    """Return a basic system summary for the 'cpu!' command."""
     uname = platform.uname()
     info = [f"System: {uname.system} {uname.node} {uname.release}"]
     try:
@@ -181,9 +180,11 @@ def get_help_text():
         "  dmesg!            - Last 5 kernel log messages (truncated if too long)\n"
         "  signal!           - Lists up to 5 nearby nodes with active signals\n"
         "  sendimage!<query> - Sends an image using query-string parameters\n"
-        "                      e.g.: sendimage!mode=all&sender_node_id=eb314389&header=myHeader&process_image=true"
-        "&upload=true&quality=75&resize=800x600&remote_target=user@host:/remote/path&ssh_key=/path/to/id_rsa"
-        "&chunk_size=180&dest=!47a78d36&connection=tcp&ack=true&sleep_delay=1"
+        "                      For example:\n"
+        "                      sendimage!header=myHeader&chunk_size=180&resize=800x600&quality=75\n"
+        "                      (Defaults: mode=all, sender_node_id=eb314389, header=nc, process_image=true,\n"
+        "                       upload=false, quality=75, resize=800x600, remote_target=\"\", ssh_key=\"\",\n"
+        "                       chunk_size=180, dest=!47a78d36, connection=tcp, ack=false, sleep_delay=1)"
     )
 
 def get_current_time():
@@ -205,7 +206,7 @@ def get_random_fortune():
 def get_dmesg_info():
     """
     Return the last 5 lines from the kernel ring buffer for 'dmesg!'.
-    If output exceeds 200 characters, it is truncated.
+    If the output exceeds 200 characters, it is truncated.
     Uses sudo for elevated permission if necessary.
     """
     try:
@@ -221,7 +222,7 @@ def get_dmesg_info():
 
 def get_signal_info(interface):
     """
-    Return info about up to 5 nearby nodes with active signals from the interface's node registry.
+    Return information about up to 5 nearby nodes with active signals from the interface's node registry.
     A node is considered active if its "rssi" can be parsed as a number.
     """
     if not hasattr(interface, "nodes") or not interface.nodes:
@@ -249,11 +250,10 @@ def get_signal_info(interface):
 def build_sender_command(params):
     """
     Convert parsed query-string parameters (a dict returned by parse_qs)
-    into a list of command-line arguments for the sender script.
-    Boolean parameters are added as flags if they are "true".
+    into a list of command-line arguments for meshtastic_sender.py.
+    Boolean parameters are added as flags if their value is "true".
     """
     args = []
-    # Mapping of parameter names to command-line flags.
     mapping = {
         "mode": "--mode",
         "sender_node_id": "--sender_node_id",
@@ -265,14 +265,13 @@ def build_sender_command(params):
         "chunk_size": "--chunk_size",
         "dest": "--dest",
         "connection": "--connection",
-        "sleep_delay": "--sleep_delay",
+        "sleep_delay": "--sleep_delay"
     }
     for key, flag in mapping.items():
         if key in params:
             value = params[key][0]
             args.append(flag)
             args.append(value)
-    # For boolean flags
     bool_flags = ["process_image", "upload", "ack"]
     for key in bool_flags:
         if key in params:
@@ -288,9 +287,9 @@ class MeshtasticBot:
         self.args = args
         self.interface = None
         self.start_time = time.time()  # For uptime reporting
-        # Mapping for additional shell-script commands (sendimage! is handled separately)
+        # Other shell-script commands mapping (sendimage! is handled specially)
         self.COMMANDS = {
-            "status": "./check_status.sh",
+            "status": "./check_status.sh"
         }
 
     def get_status_info(self):
@@ -323,7 +322,7 @@ class MeshtasticBot:
             if self.args.node_id and sender.lstrip("!") != self.args.node_id:
                 logger.info("Ignoring message from node %s (expected %s).", sender, self.args.node_id)
                 return
-            
+
             if self.args.channel_index is not None:
                 packet_channel = packet.get("channel") or packet.get("ch_index")
                 if packet_channel is not None:
@@ -333,7 +332,7 @@ class MeshtasticBot:
                             return
                     except Exception as e:
                         logger.warning("Channel filtering error: %s", e)
-            
+
             text = ""
             if "decoded" in packet:
                 text = packet["decoded"].get("text", "")
@@ -343,9 +342,9 @@ class MeshtasticBot:
             if not text:
                 logger.debug("No text in message from node %s.", sender)
                 return
-            
+
             logger.info("Received message from node %s: %s", sender, text)
-            
+
             if text == "hi!":
                 logger.info("Received 'hi!' command; replying 'well hai!'")
                 if self.interface:
@@ -444,15 +443,15 @@ class MeshtasticBot:
                         time.sleep(0.5)
                 return
 
-            # Handle the sendimage! command using query-string syntax.
+            # Handle the sendimage! command using query-string style.
             if text.startswith("sendimage!"):
                 qs_string = text[len("sendimage!"):].strip()
+                # If no "=" is present, assume the entire string is the header.
+                if "=" not in qs_string:
+                    qs_string = f"header={qs_string}"
                 params = parse_qs(qs_string)
-                # Build command-line arguments for the sender.
-                # The sender script expects standard flags, so we convert as follows.
-                args = build_sender_command(params)
-                # Optionally, you can add any fixed parameters here if needed.
-                cmd = ["python3", SENDER_SCRIPT] + args
+                cmd_args = build_sender_command(params)
+                cmd = ["python3", SENDER_SCRIPT] + cmd_args
                 logger.info("Received 'sendimage!' command. Running: %s", " ".join(cmd))
                 if self.interface:
                     try:
@@ -471,10 +470,10 @@ class MeshtasticBot:
                     logger.error("Error executing sendimage! command: %s", e)
                 return
 
-            # Process any other shell-script commands.
-            for cmd_key, script in self.COMMANDS.items():
-                if text.startswith(cmd_key):
-                    logger.info("Command '%s' recognized from node %s; executing script: %s", cmd_key, sender, script)
+            # Process any other shell-script commands from the mapping.
+            for key, script in self.COMMANDS.items():
+                if text.startswith(key):
+                    logger.info("Command '%s' recognized from node %s; executing script: %s", key, sender, script)
                     if self.interface:
                         try:
                             self.interface.close()
