@@ -1,0 +1,507 @@
+#!/usr/bin/env python3
+"""
+Meshtastic Sender
+
+This script combines two pipelines:
+  1. Image Processing Pipeline:
+     - Triggers a snapshot capture via a configured snapshot URL.
+     - Copies the snapshot from /var/lib/motion/lastsnap.jpg into the current directory.
+     - Optimizes the JPEG using jpegoptim and jpegtran, then resizes via ImageMagick’s convert.
+     - Compresses the image with Zopfli gzip and Base64 encodes the result.
+     - Writes the Base64 output to a file.
+
+  2. Persistent Sending Pipeline:
+     - Reads text content from a specified file.
+     - Splits the content into fixed-size chunks.
+     - Optionally prepends a header (generated from a template) to each chunk.
+     - Uses a persistent Meshtastic connection (TCP or serial) to send each chunk sequentially
+       with retries and inter-chunk delays.
+
+If no mode is specified, the script assumes "all"—i.e. it will run both pipelines in sequence.
+When in "all" or "process" mode, if the upload flag is set, the processed image file is uploaded via rsync.
+
+Usage Examples:
+  --- To process an image and then upload and send it ---
+  python3 meshtastic_sender.py --mode all --sender_node_id eb314389 --header nc --process_image --upload \
+    --quality 75 --resize 800x600 --remote_target "user@host:/remote/path" --ssh_key "/path/to/id_rsa" \
+    --chunk_size 180 --dest '!47a78d36' --connection tcp --ack --sleep_delay 1
+
+  --- To run only the image processing pipeline and optionally upload ---
+  python3 meshtastic_sender.py --mode process --sender_node_id eb314389 --quality 75 --resize 800x600 \
+    --upload --remote_target "user@host:/remote/path" --ssh_key "/path/to/id_rsa"
+
+  --- To send an already-processed file ---
+  python3 meshtastic_sender.py --mode send --sender_node_id eb314389 --file_path base64_image.gz \
+    --chunk_size 180 --dest '!47a78d36' --connection tcp --ack --sleep_delay 1
+
+Use --help for full details on all parameters.
+"""
+
+import argparse
+import asyncio
+import base64
+import gzip
+import logging
+import os
+import re
+import shutil
+import signal
+import subprocess
+import sys
+import time
+import glob
+from pathlib import Path
+import requests
+import zopfli.gzip
+from threading import Lock
+
+# --------- Logging Configuration ----------
+def configure_logging(debug_mode):
+    log_level = logging.DEBUG if debug_mode else logging.INFO
+    logging.basicConfig(
+        level=log_level,
+        format="%(asctime)s - %(levelname)s - %(message)s",
+        handlers=[
+            logging.StreamHandler(sys.stdout),
+            logging.FileHandler("debug_messages.log")
+        ]
+    )
+
+logger = logging.getLogger("MeshtasticSender")
+
+# --------- Image Processing Pipeline Function ----------
+def optimize_compress_zip_base64encode_jpg(
+        quality=75,
+        resize="800x600",
+        snapshot_url="http://localhost:8080/0/action/snapshot",
+        output_file="base64_image.gz"):
+    """
+    Captures a snapshot, optimizes/resizes the JPEG, compresses it with Zopfli gzip,
+    and Base64 encodes the compressed image into output_file.
+
+    Steps:
+      1. Trigger snapshot capture via snapshot_url.
+      2. Wait one second for the snapshot to be written.
+      3. Copy the snapshot from /var/lib/motion/lastsnap.jpg to the current directory.
+      4. Remove any old snapshots from /var/lib/motion/.
+      5. Optimize the JPEG using jpegoptim.
+      6. Further optimize with jpegtran.
+      7. Resize the image using ImageMagick's convert.
+      8. Compress the file using zopfli.gzip.
+      9. Base64 encode the compressed file.
+     10. Remove intermediate files.
+
+    Returns:
+      dict: Summary including file sizes and the total character count.
+    """
+    image_path = "lastsnap.jpg"
+    compressed_image_path = "compressed.jpg"
+    zipped_image_path = "compressed_image.gz"
+    summary = {}
+
+    print(f"Capturing snapshot from {snapshot_url} ...")
+    r = requests.get(snapshot_url)
+    if r.status_code != 200:
+        raise RuntimeError("Snapshot capture failed with status code: " + str(r.status_code))
+    
+    time.sleep(1)  # Allow time for the snapshot to be written.
+    
+    source_snapshot = "/var/lib/motion/lastsnap.jpg"
+    print(f"Copying snapshot from {source_snapshot} to {image_path} ...")
+    shutil.copy2(source_snapshot, image_path)
+    
+    for f in glob.glob("/var/lib/motion/*"):
+        try:
+            os.remove(f)
+        except Exception as e:
+            print(f"Warning: Could not remove {f}: {e}")
+    
+    initial_size = os.stat(image_path).st_size
+    print(f"Initial file size: {initial_size} bytes")
+    summary['initial_size'] = initial_size
+    
+    print(f"Optimizing JPEG with quality {quality} ...")
+    subprocess.run(["jpegoptim", f"--max={quality}", "--strip-all", image_path], check=True)
+    
+    subprocess.run(["jpegtran", "-optimize", "-progressive", "-copy", "none",
+                    "-outfile", compressed_image_path, image_path], check=True)
+    optimized_size = os.stat(compressed_image_path).st_size
+    print(f"Size after optimization: {optimized_size} bytes")
+    summary['optimized_size'] = optimized_size
+    
+    print(f"Resizing image to {resize} ...")
+    subprocess.run(["convert", compressed_image_path, "-resize", resize, compressed_image_path], check=True)
+    resized_size = os.stat(compressed_image_path).st_size
+    print(f"Size after resizing: {resized_size} bytes")
+    summary['resized_size'] = resized_size
+    
+    print("Compressing image using Zopfli gzip ...")
+    with open(compressed_image_path, "rb") as f_in:
+        data = f_in.read()
+    compressed_data = zopfli.gzip.compress(data)
+    with open(zipped_image_path, "wb") as f_out:
+        f_out.write(compressed_data)
+    zipped_size = os.stat(zipped_image_path).st_size
+    print(f"Size after compression: {zipped_size} bytes")
+    summary['zipped_size'] = zipped_size
+    
+    print("Encoding compressed image to Base64 ...")
+    with open(zipped_image_path, "rb") as f_in:
+        zipped_content = f_in.read()
+    base64_encoded = base64.b64encode(zipped_content)
+    with open(output_file, "wb") as f_out:
+        f_out.write(base64_encoded)
+    base64_size = os.stat(output_file).st_size
+    print(f"Size after Base64 encoding: {base64_size} bytes")
+    summary['base64_size'] = base64_size
+    
+    total_chars = len(base64_encoded)
+    print(f"Total characters in Base64 data: {total_chars}")
+    summary['total_chars'] = total_chars
+    
+    os.remove(image_path)
+    os.remove(compressed_image_path)
+    os.remove(zipped_image_path)
+    
+    print("Image processing complete. Base64 output saved to:", output_file)
+    return summary
+
+# --------- File Upload Function ----------
+def upload_file(file_path: str, remote_target: str, ssh_key: str):
+    """
+    Uploads the specified file to a remote destination using rsync with lowered priority.
+    
+    The remote destination is determined by combining remote_target and a timestamped filename.
+    """
+    remote_path = f"{remote_target.rstrip('/')}/{time.strftime('%Y%m%d%H%M%S')}-restored.jpg"
+    cmd = ["nice", "-n", "10", "rsync", "-vz", "-e", f"ssh -i {ssh_key}", file_path, remote_path]
+    try:
+        subprocess.check_call(cmd)
+        logger.info(f"File uploaded to {remote_path}")
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Upload failed: {e}")
+        sys.exit(1)
+
+# --------- Persistent Meshtastic Sender Class ----------
+from meshtastic.tcp_interface import TCPInterface
+from meshtastic.serial_interface import SerialInterface
+
+DEFAULT_MAX_RETRIES = 10
+DEFAULT_RETRY_DELAY = 1      # seconds
+DEFAULT_SLEEP_DELAY = 1.0    # seconds
+
+class PersistentMeshtasticSender:
+    """
+    Uses a persistent Meshtastic connection to send file content.
+
+    Reads a file, splits it into chunks, and sends each chunk sequentially.
+    An optional header (generated from a template) can be prepended to each chunk.
+    Retrying and delay functionality is built in.
+    """
+    def __init__(self, file_path: Path, chunk_size: int, ch_index: int, dest: str,
+                 connection: str, max_retries: int = DEFAULT_MAX_RETRIES,
+                 retry_delay: int = DEFAULT_RETRY_DELAY, header_template: str = None,
+                 use_ack: bool = False, sleep_delay: float = DEFAULT_SLEEP_DELAY):
+        self.file_path = file_path
+        self.chunk_size = chunk_size
+        self.ch_index = ch_index
+        self.dest = dest
+        self.connection = connection.lower()
+        self.max_retries = max_retries
+        self.retry_delay = retry_delay
+        self.header_template = header_template
+        self.use_ack = use_ack
+        self.sleep_delay = sleep_delay
+        self.interface = None
+
+    def read_file(self) -> str:
+        try:
+            return self.file_path.read_text()
+        except Exception as e:
+            logger.error(f"Error reading file '{self.file_path}': {e}")
+            sys.exit(1)
+
+    def get_file_size(self) -> int:
+        return self.file_path.stat().st_size
+
+    def chunk_content(self, content: str) -> list:
+        return [content[i:i + self.chunk_size] for i in range(0, len(content), self.chunk_size)]
+
+    def generate_header(self, index: int, total_chunks: int) -> str:
+        if not self.header_template:
+            return ""
+        if '#' in self.header_template:
+            pattern = re.compile(r"(#+)")
+            match = pattern.search(self.header_template)
+            if match:
+                width = len(match.group(0))
+                counter_str = f"{index:0{width}d}"
+                header = pattern.sub(counter_str, self.header_template, count=1)
+                if not header.endswith('!'):
+                    header += "!"
+                return header
+            else:
+                return f"{self.header_template}{index}!"
+        else:
+            width = len(str(total_chunks))
+            header = f"{self.header_template}{index:0{width}d}!"
+            return header
+
+    def open_connection(self):
+        """Establishes a persistent Meshtastic connection (TCP or Serial)."""
+        if self.connection == 'tcp':
+            logger.info("Establishing persistent TCP connection...")
+            try:
+                self.interface = TCPInterface(hostname="localhost")
+            except Exception as e:
+                logger.error(f"Error establishing TCP connection: {e}")
+                sys.exit(1)
+        elif self.connection == 'serial':
+            logger.info("Establishing persistent Serial connection...")
+            try:
+                self.interface = SerialInterface()
+            except Exception as e:
+                logger.error(f"Error establishing Serial connection: {e}")
+                sys.exit(1)
+        else:
+            logger.error(f"Unknown connection type: {self.connection}")
+            sys.exit(1)
+        logger.info("Persistent connection established.")
+
+    def close_connection(self):
+        """Closes the persistent Meshtastic connection."""
+        try:
+            self.interface.close()
+            logger.info("Persistent connection closed.")
+        except Exception as e:
+            logger.error(f"Error closing connection: {e}")
+
+    def send_chunk(self, message: str, chunk_index: int, total_chunks: int) -> int:
+        """
+        Sends a single chunk (optionally prepended with a header) with retries.
+        
+        Returns the number of retries performed on success.
+        """
+        if self.header_template:
+            header = self.generate_header(chunk_index, total_chunks)
+            full_message = header + message
+        else:
+            header = ""
+            full_message = message
+
+        attempt = 0
+        while attempt < self.max_retries:
+            try:
+                self.interface.sendText(full_message, wantAck=self.use_ack)
+                remaining = total_chunks - chunk_index
+                logger.info(f"Sent chunk {chunk_index}/{total_chunks} with header '{header}' "
+                            f"(Attempt {attempt+1}/{self.max_retries}, {remaining} remaining)")
+                return attempt
+            except Exception as e:
+                attempt += 1
+                logger.warning(f"Retry {attempt}/{self.max_retries} for chunk {chunk_index} due to error: {e}")
+                time.sleep(self.retry_delay)
+                if attempt == self.max_retries:
+                    logger.error(f"Aborting after {self.max_retries} retries for chunk {chunk_index}.")
+                    sys.exit(1)
+        return attempt
+
+    def send_all_chunks(self):
+        """Reads the file, splits it into chunks, and sequentially sends each chunk."""
+        file_content = self.read_file()
+        chunks = self.chunk_content(file_content)
+        total_chunks = len(chunks)
+        logger.info(f"Total chunks to send: {total_chunks}")
+        total_failures = 0
+        for i, chunk in enumerate(chunks, start=1):
+            failures = self.send_chunk(chunk, i, total_chunks)
+            total_failures += failures
+            time.sleep(self.sleep_delay)
+        return total_chunks, total_failures
+
+# --------- Signal Handling for Sending ----------
+def setup_signal_handlers(sender):
+    def handler(sig, frame):
+        logger.info("CTRL+C detected. Closing connection...")
+        sender.close_connection()
+        sys.exit(0)
+    signal.signal(signal.SIGINT, handler)
+    signal.signal(signal.SIGTERM, handler)
+
+# --------- Main Routine ----------
+def main():
+    parser = argparse.ArgumentParser(
+        description="Meshtastic Sender: Process an image and/or send file content via a persistent Meshtastic connection."
+    )
+    parser.add_argument("--mode", choices=["send", "process", "all"],
+                        default="all",
+                        help="Mode to run: 'process' to process an image, 'send' to send file content, "
+                             "'all' to run both (default: all)")
+    parser.add_argument("--run_time", type=int, default=5,
+                        help="Run time in minutes for collecting/sending (used in send mode)")
+    parser.add_argument("--sender_node_id", required=True,
+                        help="Sender node ID to filter messages from")
+    parser.add_argument("--header", type=str, default="pn",
+                        help="Header template (use '#' as digit placeholders)")
+    # Parameters for image processing:
+    parser.add_argument("--quality", type=int, default=75,
+                        help="JPEG quality factor for optimization")
+    parser.add_argument("--resize", type=str, default="800x600",
+                        help="Resize dimensions (e.g., 800x600)")
+    parser.add_argument("--output", type=str, default="base64_image.gz",
+                        help="Output file from image processing")
+    # Upload parameters (only required if --upload is set)
+    parser.add_argument("--remote_target", type=str,
+                        help="Remote path for file upload (required if --upload is set)")
+    parser.add_argument("--ssh_key", type=str,
+                        help="SSH identity file for rsync (required if --upload is set)")
+    parser.add_argument("--poll_interval", type=int, default=10,
+                        help="Poll interval in seconds for sending progress")
+    parser.add_argument("--inactivity_timeout", type=int, default=60,
+                        help="Inactivity timeout in seconds")
+    parser.add_argument("--connection", type=str, choices=["tcp", "serial"], default="tcp",
+                        help="Connection mode: 'tcp' or 'serial'")
+    parser.add_argument("--tcp_host", type=str, default="localhost",
+                        help="TCP host (default: localhost)")
+    parser.add_argument("--process_image", action="store_true",
+                        help="Run the image processing pipeline (optimization, resize, compress, Base64 encode)")
+    parser.add_argument("--upload", action="store_true",
+                        help="Upload the processed image file using rsync (requires --remote_target and --ssh_key)")
+    # Parameters for sending pipeline:
+    parser.add_argument("--file_path", type=str,
+                        help="Path to text file to send (if not provided in 'all' mode, defaults to the output file)")
+    parser.add_argument("--chunk_size", type=int, default=200,
+                        help="Maximum length of each chunk when sending")
+    parser.add_argument("--ch_index", type=int, default=1,
+                        help="Starting chunk index (default: 1)")
+    parser.add_argument("--dest", type=str, default="!47a78d36",
+                        help="Destination token for Meshtastic send")
+    parser.add_argument("--ack", action="store_true",
+                        help="Enable ACK mode for sending")
+    parser.add_argument("--max_retries", type=int, default=DEFAULT_MAX_RETRIES,
+                        help="Maximum number of retries per chunk")
+    parser.add_argument("--retry_delay", type=int, default=DEFAULT_RETRY_DELAY,
+                        help="Delay in seconds between retries")
+    parser.add_argument("--sleep_delay", type=float, default=DEFAULT_SLEEP_DELAY,
+                        help="Sleep delay in seconds between sending chunks")
+    parser.add_argument("--debug", action="store_true",
+                        help="Enable debug mode for detailed logging")
+    args = parser.parse_args()
+
+    # If upload is enabled, then remote_target and ssh_key are required.
+    if args.upload:
+        if not args.remote_target or not args.ssh_key:
+            parser.error("--remote_target and --ssh_key are required when --upload is set.")
+
+    configure_logging(args.debug)
+
+    if args.mode == "process":
+        print("Running image processing pipeline...")
+        summary = optimize_compress_zip_base64encode_jpg(
+            quality=args.quality,
+            resize=args.resize,
+            snapshot_url="http://localhost:8080/0/action/snapshot",
+            output_file=args.output
+        )
+        print("Image processing complete. Summary:")
+        for k, v in summary.items():
+            print(f"{k}: {v}")
+        if args.upload:
+            print("Uploading processed image file...")
+            upload_file(args.output, args.remote_target, args.ssh_key)
+    elif args.mode == "send":
+        if not args.file_path:
+            logger.error("For send mode, --file_path is required.")
+            sys.exit(1)
+        file_path = Path(args.file_path)
+        sender = PersistentMeshtasticSender(
+            file_path=file_path,
+            chunk_size=args.chunk_size,
+            ch_index=args.ch_index,
+            dest=args.dest,
+            connection=args.connection,
+            max_retries=args.max_retries,
+            retry_delay=args.retry_delay,
+            header_template=args.header,
+            use_ack=args.ack,
+            sleep_delay=args.sleep_delay
+        )
+        setup_signal_handlers(sender)
+        start_time = time.time()
+        sender.open_connection()
+        total_chunks, total_failures = sender.send_all_chunks()
+        sender.close_connection()
+        end_time = time.time()
+        elapsed_seconds = end_time - start_time
+        file_size = sender.get_file_size()
+        formatted_elapsed = time.strftime("%H:%M:%S", time.gmtime(elapsed_seconds))
+        total_attempts = total_chunks + total_failures
+        speed = file_size / elapsed_seconds if elapsed_seconds > 0 else file_size
+        summary_str = (
+            "----- Execution Summary -----\n"
+            f"Start Time:          {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(start_time))}\n"
+            f"End Time:            {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(end_time))}\n"
+            f"Time Elapsed:        {formatted_elapsed} (HH:MM:SS)\n"
+            f"Total Chunks Sent:   {total_chunks}\n"
+            f"Total Attempts:      {total_attempts} (includes {total_failures} retries)\n"
+            f"Initial File Size:   {file_size} bytes\n"
+            f"Transmission Speed:  {speed:.2f} bytes/second\n"
+            "------------------------------"
+        )
+        logger.info(summary_str)
+    else:  # Mode "all": Run both pipelines in sequence.
+        print("Running image processing pipeline...")
+        summary = optimize_compress_zip_base64encode_jpg(
+            quality=args.quality,
+            resize=args.resize,
+            snapshot_url="http://localhost:8080/0/action/snapshot",
+            output_file=args.output
+        )
+        print("Image processing complete. Summary:")
+        for k, v in summary.items():
+            print(f"{k}: {v}")
+        if args.upload:
+            print("Uploading processed image file...")
+            upload_file(args.output, args.remote_target, args.ssh_key)
+        # If file_path is not provided, default to the output file from processing.
+        if not args.file_path:
+            args.file_path = args.output
+        file_path = Path(args.file_path)
+        sender = PersistentMeshtasticSender(
+            file_path=file_path,
+            chunk_size=args.chunk_size,
+            ch_index=args.ch_index,
+            dest=args.dest,
+            connection=args.connection,
+            max_retries=args.max_retries,
+            retry_delay=args.retry_delay,
+            header_template=args.header,
+            use_ack=args.ack,
+            sleep_delay=args.sleep_delay
+        )
+        setup_signal_handlers(sender)
+        start_time = time.time()
+        sender.open_connection()
+        total_chunks, total_failures = sender.send_all_chunks()
+        sender.close_connection()
+        end_time = time.time()
+        elapsed_seconds = end_time - start_time
+        file_size = sender.get_file_size()
+        formatted_elapsed = time.strftime("%H:%M:%S", time.gmtime(elapsed_seconds))
+        total_attempts = total_chunks + total_failures
+        speed = file_size / elapsed_seconds if elapsed_seconds > 0 else file_size
+        summary_str = (
+            "----- Execution Summary -----\n"
+            f"Start Time:          {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(start_time))}\n"
+            f"End Time:            {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(end_time))}\n"
+            f"Time Elapsed:        {formatted_elapsed} (HH:MM:SS)\n"
+            f"Total Chunks Sent:   {total_chunks}\n"
+            f"Total Attempts:      {total_attempts} (includes {total_failures} retries)\n"
+            f"Initial File Size:   {file_size} bytes\n"
+            f"Transmission Speed:  {speed:.2f} bytes/second\n"
+            "------------------------------"
+        )
+        logger.info(summary_str)
+
+if __name__ == "__main__":
+    main()
