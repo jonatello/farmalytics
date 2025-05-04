@@ -62,7 +62,7 @@ class MeshtasticBot:
         self.interface = None
         # Map commands to their respective shell scripts.
         self.COMMANDS = {
-            "sendimage!": "./send_image.sh",  # trigger image sending
+            "sendimage!": "./send_image.sh",  # trigger image sending via the sender script
             "status": "./check_status.sh",     # trigger status check
             # Add additional commands as needed.
         }
@@ -80,6 +80,8 @@ class MeshtasticBot:
           - If --channel_index is set (other than -1), the message channel is checked.
         
         On matching a known command, the corresponding shell script is executed.
+        Before any command is run, the current Meshtastic connection is closed,
+        and the bot pauses for 2 seconds to allow the device to reset.
         """
         try:
             sender = packet.get("fromId", "")
@@ -115,13 +117,22 @@ class MeshtasticBot:
 
             logger.info("Received message from node %s: %s", sender, text)
 
-            # Check for known commands and execute the script.
+            # Check for known commands and execute the corresponding shell script.
             for cmd, script in self.COMMANDS.items():
                 if text.startswith(cmd):
                     logger.info("Command '%s' recognized from node %s; executing script: %s",
                                 cmd, sender, script)
+                    
+                    # Close connection and pause for all commands.
+                    if self.interface:
+                        try:
+                            self.interface.close()
+                            logger.info("Closed Meshtastic interface before launching script: %s", script)
+                        except Exception as e:
+                            logger.error("Error closing Meshtastic interface: %s", e)
+                    time.sleep(2)
+
                     try:
-                        # Execute the script directly using its shebang.
                         subprocess.run(script, shell=True, check=True)
                     except subprocess.CalledProcessError as e:
                         logger.error("Error executing script %s: %s", script, e)
