@@ -45,7 +45,7 @@ from threading import Lock
 def configure_logging(debug_mode):
     """
     Configures logging to stream to stdout and write to a file.
-    
+
     Args:
       debug_mode (bool): If True, set log level to DEBUG; otherwise, INFO.
     """
@@ -67,7 +67,7 @@ class MeshtasticProcessor:
     def __init__(self, args):
         """
         Initializes the processor with the provided arguments.
-        
+
         Args:
           args: Command-line arguments (contains sender_node_id, header, etc.).
         """
@@ -87,7 +87,7 @@ class MeshtasticProcessor:
     def print_table(self, title, items):
         """
         Prints an ASCII table with a title and key-value pairs.
-        
+
         Args:
           title (str): The title of the table.
           items (list[tuple]): A list of (key, value) tuples to display.
@@ -127,7 +127,7 @@ class MeshtasticProcessor:
     def print_performance_summary(self, total_runtime, total_msgs, missing_msgs, file_size):
         """
         Prints a performance summary after processing.
-        
+
         Args:
           total_runtime (float): Total running time in seconds.
           total_msgs (int): Total unique messages received.
@@ -247,7 +247,7 @@ class MeshtasticProcessor:
         """
         Decodes the concatenated Base64 payload and decompresses the gzip data,
         then saves the result to an output image file.
-        
+
         This step only runs if the --process_image flag is set.
         """
         logger.info("Decoding Base64 and decompressing Gzip...")
@@ -270,7 +270,7 @@ class MeshtasticProcessor:
 
         The command is executed with a lower CPU priority using 'nice'
         and is retried up to three times.
-        
+
         This step only runs if the --upload flag is set.
         """
         remote_path = f"{self.args.remote_target.rstrip('/')}/{time.strftime('%Y%m%d%H%M%S')}-restored.jpg"
@@ -360,7 +360,7 @@ class MeshtasticProcessor:
 def setup_signal_handlers(processor):
     """
     Sets up handlers for SIGINT and SIGTERM so that the processor can shutdown gracefully.
-    
+
     When triggered, the running flag is set to False.
     """
     def handler(sig, frame):
@@ -374,7 +374,7 @@ def setup_signal_handlers(processor):
 def main():
     """
     Parses command-line arguments, configures logging, and initializes the MeshtasticProcessor.
-    
+
     Sets up signal handlers and starts the asynchronous processing loop.
     """
     parser = argparse.ArgumentParser(
