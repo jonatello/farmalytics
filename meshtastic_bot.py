@@ -7,7 +7,7 @@ to listen for incoming messages. It applies node and channel filtering.
 When a message is received, the bot performs one of these actions:
 
   • "hi!"       - Replies with "well hai!".
-  • "top!"      - Sends a basic system summary.
+  • "cpu!"      - Sends basic system/CPU info.
   • "status!"   - Sends detailed node status (each line sent individually).
   • "sysinfo!"  - Sends general system info (each line sent individually).
   • "df!"       - Sends disk usage information.
@@ -21,7 +21,7 @@ When a message is received, the bot performs one of these actions:
   • "fortune!"  - Sends a random fortune message.
   • "dmesg!"    - Sends the last 5 kernel log messages (truncated if too long).
   • "signal!"   - Lists up to 5 nearby nodes with active signals.
-
+  
 Shell-script commands (e.g. "sendimage!") are also supported. After executing a
 shell command (which closes the connection), the bot automatically re‑establishes
 its connection.
@@ -68,7 +68,7 @@ logger.addHandler(file_handler)
 
 # ---------------------- Utility Functions ----------------------
 def get_system_info():
-    """Return a basic system summary for 'top!'."""
+    """Return a basic system summary for the 'cpu!' command."""
     uname = platform.uname()
     info = [f"System: {uname.system} {uname.node} {uname.release}"]
     try:
@@ -170,7 +170,7 @@ def get_help_text():
     return (
         "Available commands:\n"
         "  hi!       - Greets you back\n"
-        "  top!      - Basic system info\n"
+        "  cpu!      - Basic system/CPU info\n"
         "  status!   - Detailed node status (line-by-line)\n"
         "  sysinfo!  - General system info (line-by-line)\n"
         "  df!       - Disk usage info\n"
@@ -182,7 +182,7 @@ def get_help_text():
         "  ping!     - Replies with pong!\n"
         "  time!     - Current local time\n"
         "  fortune!  - A random fortune message\n"
-        "  dmesg!    - Last 5 kernel log messages (truncated if needed)\n"
+        "  dmesg!    - Last 5 kernel log messages (truncated if too long)\n"
         "  signal!   - Lists up to 5 nearby nodes with active signals\n"
         "Shell-script commands (if configured): e.g., sendimage!"
     )
@@ -209,13 +209,16 @@ def get_random_fortune():
 def get_dmesg_info():
     """
     Return the last 5 lines from the kernel ring buffer for 'dmesg!'.
-    If the output exceeds 200 characters, truncate it.
+    If the output exceeds 200 characters, it is truncated.
+    Uses sudo to ensure permission.
     """
     try:
-        output = subprocess.check_output("dmesg | tail -n 5", shell=True, universal_newlines=True)
+        output = subprocess.check_output("sudo dmesg | tail -n 5", shell=True, universal_newlines=True)
         max_length = 200
         if len(output) > max_length:
             output = output[:max_length] + "..."
+        if not output.strip():
+            return "No kernel messages available."
         return f"Kernel messages (last 5):\n{output}"
     except Exception as e:
         return f"Error retrieving dmesg output: {e}"
@@ -233,7 +236,7 @@ def get_signal_info(interface):
     for node_id, node_data in interface.nodes.items():
         rssi = node_data.get("rssi")
         try:
-            rssi_value = float(rssi)
+            float(rssi)
             active_nodes.append((node_id, node_data))
         except (TypeError, ValueError):
             continue
@@ -321,8 +324,8 @@ class MeshtasticBot:
                     self.interface.sendText("well hai!")
                 return
 
-            if text == "top!":
-                logger.info("Received 'top!' command; sending basic system info")
+            if text == "cpu!":
+                logger.info("Received 'cpu!' command; sending basic system/CPU info")
                 if self.interface:
                     self.interface.sendText(get_system_info())
                 return
@@ -423,9 +426,11 @@ class MeshtasticBot:
                         except Exception as e:
                             logger.error("Error closing interface: %s", e)
                         self.interface = None
-                    time.sleep(2)
+                    time.sleep(5)
                     try:
-                        subprocess.run(script, shell=True, check=True)
+                        result = subprocess.run(script, shell=True, check=True,
+                                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+                        logger.info("Script output: %s", result.stdout)
                     except subprocess.CalledProcessError as e:
                         logger.error("Error executing script '%s': %s", script, e)
                     return
