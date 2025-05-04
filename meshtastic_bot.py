@@ -1,95 +1,195 @@
-import subprocess  # To execute local scripts and Meshtastic commands
-import time        # To manage delays
-import logging     # For logging messages
-import argparse    # To handle command-line arguments
+#!/usr/bin/env python3
+"""
+meshtastic_bot.py - Improved Meshtastic Bot
 
-# ---------------------- Command-Line Argument Parsing ----------------------
-parser = argparse.ArgumentParser(description="Meshtastic Bot with Command Execution & Filtering")
-parser.add_argument("--channel_index", type=int, default=None, help="Filter messages by channel index (default: all channels)")
-parser.add_argument("--node_id", type=str, default=None, help="Filter messages by sender node ID (default: all nodes)")
-args = parser.parse_args()
+This bot uses a persistent TCP connection (via Meshtastic’s API)
+to listen for incoming messages. It applies node and channel filtering.
+When a message beginning with a recognized header (e.g., "sendimage!" or "status")
+is detected, the bot executes the corresponding shell script.
 
-# ---------------------- Configuration ----------------------
-# Define commands and their respective actions.
-COMMANDS = {
-    "sendimage!": "./send_image.sh",  # Runs send_image.sh when "sendimage!" is received
-    "status": "./check_status.sh",  # Runs check_status.sh when "status" is received
-    # Uncomment and add new commands below:
-    # "restart!": "./restart_device.sh",
-    # "logs": "./get_logs.sh"
-}
+Usage Examples:
+  python3 meshtastic_bot.py --tcp_host localhost --channel_index 0 --node_id fb123456
+  (Pass --channel_index -1 to disable channel filtering)
 
-# Enable logging for debugging and tracking execution
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-logger = logging.getLogger()
+This script uses robust logging (both to console and to a rotating file)
+and follows common patterns for error handling and message filtering.
+"""
 
-# ---------------------- Message Handling ----------------------
-def receive_message():
-    """
-    Continuously listens for new messages from the Meshtastic network.
-    - Uses subprocess to call the Meshtastic CLI.
-    - Parses incoming messages to trigger corresponding actions.
+import time
+import argparse
+import logging
+import logging.handlers
+import subprocess
+import sys
 
-    Returns:
-        dict: A dictionary containing message text, sender node, and channel index.
-    """
-    try:
-        result = subprocess.run("meshtastic --host --receive", shell=True, capture_output=True, text=True)
-        message_data = result.stdout.strip().split("\n")  # Process output lines
+# Import Meshtastic TCP interface and the pubsub mechanism.
+from meshtastic.tcp_interface import TCPInterface
+from pubsub import pub
+
+# ---------------------- Logging Configuration ----------------------
+logger = logging.getLogger("MeshtasticBot")
+logger.setLevel(logging.DEBUG)  # Capture all logs
+
+formatter = logging.Formatter(
+    "%(asctime)s - %(filename)s:%(lineno)d - %(levelname)s - %(message)s"
+)
+
+# Console handler at INFO level
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.INFO)
+console_handler.setFormatter(formatter)
+logger.addHandler(console_handler)
+
+# Rotating file handler at DEBUG level (rotates at 1 MB, keeps 3 backups)
+file_handler = logging.handlers.RotatingFileHandler(
+    "meshtastic_bot.log", maxBytes=1024 * 1024, backupCount=3
+)
+file_handler.setLevel(logging.DEBUG)
+file_handler.setFormatter(formatter)
+logger.addHandler(file_handler)
+
+
+# ---------------------- Bot Class ----------------------
+class MeshtasticBot:
+    def __init__(self, args):
+        """
+        Initializes the bot with command-line parameters.
         
-        message_info = {}
-        for line in message_data:
-            if "text=" in line:
-                message_info["text"] = line.split("text=")[-1].strip().lower()  # Extract message content
-            if "from=" in line:
-                message_info["node_id"] = line.split("from=")[-1].strip()  # Extract sender node ID
-            if "ch_index=" in line:
-                message_info["channel_index"] = int(line.split("ch_index=")[-1].strip())  # Extract channel index
+        Args:
+          args: Parsed command-line arguments.
+        """
+        self.args = args
+        self.interface = None
+        # Map commands to their respective shell scripts.
+        self.COMMANDS = {
+            "sendimage!": "./send_image.sh",  # trigger image sending
+            "status": "./check_status.sh",     # trigger status check
+            # Add additional commands as needed.
+        }
+
+    def on_receive(self, packet, interface=None):
+        """
+        Callback triggered upon receiving a Meshtastic message.
+
+        The packet is expected to be a dictionary that contains:
+          - "fromId": The sending node (may be prefixed with "!" that we strip).
+          - "decoded": A dictionary containing a "text" field with the message content.
         
-        return message_info if message_info else None
-    except subprocess.CalledProcessError as e:
-        logger.error(f"Error retrieving messages: {e}")
-        return None
+        Filtering:
+          - If --node_id is specified, only messages from that node are processed.
+          - If --channel_index is set (other than -1), the message channel is checked.
+        
+        On matching a known command, the corresponding shell script is executed.
+        """
+        try:
+            sender = packet.get("fromId", "")
+            # Filter by node_id (if provided)
+            if self.args.node_id and sender.lstrip("!") != self.args.node_id:
+                logger.info("Ignoring message from node %s (expected %s).",
+                            sender, self.args.node_id)
+                return
 
-def process_message(message_info):
-    """
-    Checks if the received message matches a predefined command.
-    If a match is found, it executes the corresponding script.
-    Also applies filtering based on channel and node ID parameters.
+            # If channel filtering is enabled, check for channel information.
+            if self.args.channel_index is not None:
+                # Some packets include channel info under "channel" or "ch_index".
+                packet_channel = packet.get("channel") or packet.get("ch_index")
+                if packet_channel is not None:
+                    try:
+                        if int(packet_channel) != self.args.channel_index:
+                            logger.info("Ignoring message from channel %s (expected %s).",
+                                        packet_channel, self.args.channel_index)
+                            return
+                    except Exception as e:
+                        logger.warning("Channel filtering error: %s", e)
 
-    Parameters:
-        message_info (dict): Dictionary containing message data.
-    """
-    if not message_info:
-        return
-    
-    text = message_info.get("text", "")
-    sender_node = message_info.get("node_id", "")
-    channel_index = message_info.get("channel_index", None)
+            # Extract the message text. Prefer the "decoded" field if present.
+            text = ""
+            if "decoded" in packet:
+                text = packet["decoded"].get("text", "")
+            else:
+                text = packet.get("text", "")
+            text = text.strip().lower()
+            if not text:
+                logger.debug("No text in message from node %s.", sender)
+                return
 
-    # Apply channel filtering based on command-line argument
-    if args.channel_index is not None and channel_index != args.channel_index:
-        logger.info(f"Ignoring message from channel {channel_index}, only accepting from {args.channel_index}")
-        return
+            logger.info("Received message from node %s: %s", sender, text)
 
-    # Apply node filtering based on command-line argument
-    if args.node_id is not None and sender_node != args.node_id:
-        logger.info(f"Ignoring message from node {sender_node}, only accepting from {args.node_id}")
-        return
+            # Check for known commands and execute the script.
+            for cmd, script in self.COMMANDS.items():
+                if text.startswith(cmd):
+                    logger.info("Command '%s' recognized from node %s; executing script: %s",
+                                cmd, sender, script)
+                    try:
+                        # Execute the script directly using its shebang.
+                        subprocess.run(script, shell=True, check=True)
+                    except subprocess.CalledProcessError as e:
+                        logger.error("Error executing script %s: %s", script, e)
+                    return
 
-    # Execute the command if it matches a predefined action
-    if text in COMMANDS:
-        logger.info(f"Executing: {COMMANDS[text]}")
-        subprocess.run(COMMANDS[text], shell=True)  # Run the associated shell script
-    else:
-        logger.info("No matching command found.")
+            logger.info("No matching command for message: %s", text)
+        except Exception as ex:
+            logger.error("Exception in on_receive: %s", ex)
 
-# ---------------------- Main Execution ----------------------
-print("Listening for messages...")
+    def connect(self):
+        """
+        Establishes a persistent TCP connection using Meshtastic’s TCPInterface.
+        Subscribes the on_receive callback to incoming messages.
+        """
+        try:
+            logger.info("Establishing persistent TCP connection to %s...", self.args.tcp_host)
+            self.interface = TCPInterface(hostname=self.args.tcp_host)
+            pub.subscribe(self.on_receive, "meshtastic.receive")
+            logger.info("Connected via TCP to %s.", self.args.tcp_host)
+        except Exception as e:
+            logger.error("Error establishing TCP connection: %s", e)
+            sys.exit(1)
 
-while True:
-    received_message_info = receive_message()
-    if received_message_info:
-        process_message(received_message_info)
-    
-    time.sleep(1)  # Prevent high CPU usage
+    def run(self):
+        """
+        Connects to the Meshtastic device and enters an infinite loop listening for messages.
+        Shuts down cleanly upon KeyboardInterrupt.
+        """
+        self.connect()
+        if self.args.channel_index is not None:
+            logger.info("Listening for messages on channel %s...", self.args.channel_index)
+        else:
+            logger.info("Listening for messages on all channels...")
+        try:
+            while True:
+                # Sleep briefly to reduce CPU usage.
+                time.sleep(1)
+        except KeyboardInterrupt:
+            logger.info("KeyboardInterrupt received. Shutting down MeshtasticBot...")
+        finally:
+            if self.interface:
+                try:
+                    self.interface.close()
+                    logger.info("Closed Meshtastic interface.")
+                except Exception as e:
+                    logger.error("Error closing Meshtastic interface: %s", e)
+
+
+# ---------------------- Main Entry Point ----------------------
+def main():
+    parser = argparse.ArgumentParser(
+        description="Improved Meshtastic Bot with TCP Interaction, Robust Logging, and Filtering"
+    )
+    parser.add_argument("--tcp_host", type=str, default="localhost",
+                        help="TCP host for Meshtastic connection (default: localhost)")
+    parser.add_argument("--channel_index", type=int, default=0,
+                        help="Filter messages by channel index (default: 0). Use -1 to disable channel filtering.")
+    parser.add_argument("--node_id", type=str, default=None,
+                        help="Filter messages by sender node ID (default: None).")
+    args = parser.parse_args()
+
+    # If channel_index is passed as -1, disable filtering by channel.
+    if args.channel_index == -1:
+        args.channel_index = None
+
+    bot = MeshtasticBot(args)
+    bot.run()
+
+
+if __name__ == "__main__":
+    main()
