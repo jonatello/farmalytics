@@ -3,28 +3,29 @@
 meshtastic_bot.py - Improved Meshtastic Bot
 
 This bot uses a persistent TCP connection (via Meshtastic’s API)
-to listen for incoming messages. It applies node and channel filtering.
+to listen for incoming messages with node and channel filtering.
 When a message is received, the bot performs one of these actions:
 
   • "hi!"       - Replies with "well hai!".
   • "cpu!"      - Sends basic system/CPU info.
-  • "status!"   - Sends detailed node status (each line sent individually).
-  • "sysinfo!"  - Sends general system info (each line sent individually).
-  • "df!"       - Sends disk usage information.
+  • "status!"   - Sends detailed node status (line-by-line).
+  • "sysinfo!"  - Sends general system info (line-by-line).
+  • "df!"       - Sends disk usage info.
   • "temp!"     - Sends CPU temperature.
   • "ip!"       - Sends the primary IP address.
   • "mem!"      - Sends memory usage info.
   • "joke!"     - Tells a random joke.
-  • "help!"     - Lists available commands (sent line-by-line).
+  • "help!"     - Shows available commands (line-by-line).
   • "ping!"     - Replies with "pong!".
   • "time!"     - Sends the current local time.
   • "fortune!"  - Sends a random fortune message.
-  • "dmesg!"    - Sends the last 5 kernel log messages (truncated if too long).
+  • "dmesg!"    - Sends the last 5 kernel log messages (truncated if needed).
   • "signal!"   - Lists up to 5 nearby nodes with active signals.
+  • "sendimage!<header>" - Executes the send_image.sh script using the provided <header> value.
+     (If no header value is provided, “nc” is used as the default.)
   
-Shell-script commands (e.g. "sendimage!") are also supported. After executing a
-shell command (which closes the connection), the bot automatically re‑establishes
-its connection.
+Shell-script commands (e.g. "sendimage!") close the interface, wait, then execute the command,
+after which the connection is re‑established.
 
 Usage:
   python3 meshtastic_bot.py --tcp_host localhost --channel_index 0 --node_id fb123456
@@ -184,6 +185,7 @@ def get_help_text():
         "  fortune!  - A random fortune message\n"
         "  dmesg!    - Last 5 kernel log messages (truncated if too long)\n"
         "  signal!   - Lists up to 5 nearby nodes with active signals\n"
+        "  sendimage!<header> - Sends an image with the specified header (default: nc)\n"
         "Shell-script commands (if configured): e.g., sendimage!"
     )
 
@@ -210,7 +212,7 @@ def get_dmesg_info():
     """
     Return the last 5 lines from the kernel ring buffer for 'dmesg!'.
     If the output exceeds 200 characters, it is truncated.
-    Uses sudo to ensure permission.
+    Uses sudo in case elevated permission is required.
     """
     try:
         output = subprocess.check_output("sudo dmesg | tail -n 5", shell=True, universal_newlines=True)
@@ -260,8 +262,8 @@ class MeshtasticBot:
         self.args = args
         self.interface = None
         self.start_time = time.time()  # For uptime reporting
+        # Map shell-script commands (except sendimage! which is handled separately).
         self.COMMANDS = {
-            "sendimage!": "./send_image.sh",
             "status": "./check_status.sh",
         }
 
@@ -416,6 +418,33 @@ class MeshtasticBot:
                         time.sleep(0.5)
                 return
 
+            # Handle the sendimage! command separately.
+            if text.startswith("sendimage!"):
+                # Extract header parameter after the exclamation mark.
+                header_parameter = text[len("sendimage!"):].strip()
+                if not header_parameter:
+                    header_parameter = "nc"
+                logger.info("Received 'sendimage!' command with header: %s", header_parameter)
+                if self.interface:
+                    try:
+                        self.interface.close()
+                        logger.info("Closed Meshtastic interface for sendimage!")
+                    except Exception as e:
+                        logger.error("Error closing interface: %s", e)
+                    self.interface = None
+                # Increase delay for resource cleanup.
+                time.sleep(5)
+                command = f"./send_image.sh {header_parameter}"
+                try:
+                    result = subprocess.run(command, shell=True, check=True,
+                                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                            universal_newlines=True)
+                    logger.info("send_image.sh output: %s", result.stdout)
+                except subprocess.CalledProcessError as e:
+                    logger.error("Error executing 'sendimage!' script: %s", e)
+                return
+
+            # Process any other shell-script commands from the COMMANDS mapping.
             for cmd, script in self.COMMANDS.items():
                 if text.startswith(cmd):
                     logger.info("Command '%s' recognized from node %s; executing script: %s", cmd, sender, script)
@@ -429,7 +458,8 @@ class MeshtasticBot:
                     time.sleep(5)
                     try:
                         result = subprocess.run(script, shell=True, check=True,
-                                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+                                                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                                universal_newlines=True)
                         logger.info("Script output: %s", result.stdout)
                     except subprocess.CalledProcessError as e:
                         logger.error("Error executing script '%s': %s", script, e)
