@@ -9,16 +9,16 @@ This script combines two pipelines:
      - Optimizes the JPEG using jpegoptim and jpegtran, then resizes via ImageMagick’s convert.
      - Compresses the image with Zopfli gzip and Base64 encodes the result.
      - Writes the Base64 output to a file.
-
+     
   2. Persistent Sending Pipeline:
-     - Reads text content from a specified file.
+     - Reads content from a specified file.
      - Splits the content into fixed-size chunks.
      - Optionally prepends a header (generated from a template) to each chunk.
-     - Uses a persistent Meshtastic connection (TCP or serial) to send each chunk sequentially
+     - Uses a persistent Meshtastic connection (TCP or serial) to send each chunk sequentially,
        with retries and inter-chunk delays.
-
-If no mode is specified, the script assumes "all"—i.e. it will run both pipelines in sequence.
-When in "all" or "process" mode, if the upload flag is set, the processed image file is uploaded via rsync.
+       
+If no mode is specified, the script defaults to “all”—that is, it will run both pipelines in sequence.
+When in “all” or “process” mode with the upload flag set, the processed image file is uploaded via rsync.
 
 Usage Examples:
   --- To process an image and then upload and send it ---
@@ -54,6 +54,19 @@ from pathlib import Path
 import requests
 import zopfli.gzip
 from threading import Lock
+
+# --------- Simple ASCII Table Helper ----------
+def print_table(title, items):
+    table_width1 = 30
+    table_width2 = 50
+    separator = "+" + "-" * table_width1 + "+" + "-" * table_width2 + "+"
+    title_line = "| {:^{w1}} | {:^{w2}} |".format(title, "", w1=table_width1 - 2, w2=table_width2 - 2)
+    print(separator)
+    print(title_line)
+    print(separator)
+    for key, value in items:
+        print("| {:<{w1}} | {:<{w2}} |".format(key, str(value), w1=table_width1 - 2, w2=table_width2 - 2))
+    print(separator)
 
 # --------- Logging Configuration ----------
 def configure_logging(debug_mode):
@@ -92,7 +105,7 @@ def optimize_compress_zip_base64encode_jpg(
      10. Remove intermediate files.
 
     Returns:
-      dict: Summary including file sizes and the total character count.
+      dict: A summary dictionary including file sizes and total character count.
     """
     image_path = "lastsnap.jpg"
     compressed_image_path = "compressed.jpg"
@@ -118,7 +131,7 @@ def optimize_compress_zip_base64encode_jpg(
     
     initial_size = os.stat(image_path).st_size
     print(f"Initial file size: {initial_size} bytes")
-    summary['initial_size'] = initial_size
+    summary['Initial Size'] = f"{initial_size} bytes"
     
     print(f"Optimizing JPEG with quality {quality} ...")
     subprocess.run(["jpegoptim", f"--max={quality}", "--strip-all", image_path], check=True)
@@ -127,13 +140,13 @@ def optimize_compress_zip_base64encode_jpg(
                     "-outfile", compressed_image_path, image_path], check=True)
     optimized_size = os.stat(compressed_image_path).st_size
     print(f"Size after optimization: {optimized_size} bytes")
-    summary['optimized_size'] = optimized_size
+    summary['Optimized Size'] = f"{optimized_size} bytes"
     
     print(f"Resizing image to {resize} ...")
     subprocess.run(["convert", compressed_image_path, "-resize", resize, compressed_image_path], check=True)
     resized_size = os.stat(compressed_image_path).st_size
     print(f"Size after resizing: {resized_size} bytes")
-    summary['resized_size'] = resized_size
+    summary['Resized Size'] = f"{resized_size} bytes"
     
     print("Compressing image using Zopfli gzip ...")
     with open(compressed_image_path, "rb") as f_in:
@@ -143,7 +156,7 @@ def optimize_compress_zip_base64encode_jpg(
         f_out.write(compressed_data)
     zipped_size = os.stat(zipped_image_path).st_size
     print(f"Size after compression: {zipped_size} bytes")
-    summary['zipped_size'] = zipped_size
+    summary['Compressed Size'] = f"{zipped_size} bytes"
     
     print("Encoding compressed image to Base64 ...")
     with open(zipped_image_path, "rb") as f_in:
@@ -153,11 +166,11 @@ def optimize_compress_zip_base64encode_jpg(
         f_out.write(base64_encoded)
     base64_size = os.stat(output_file).st_size
     print(f"Size after Base64 encoding: {base64_size} bytes")
-    summary['base64_size'] = base64_size
+    summary['Base64 Size'] = f"{base64_size} bytes"
     
     total_chars = len(base64_encoded)
     print(f"Total characters in Base64 data: {total_chars}")
-    summary['total_chars'] = total_chars
+    summary['Total Characters'] = total_chars
     
     os.remove(image_path)
     os.remove(compressed_image_path)
@@ -171,7 +184,7 @@ def upload_file(file_path: str, remote_target: str, ssh_key: str):
     """
     Uploads the specified file to a remote destination using rsync with lowered priority.
     
-    The remote destination is determined by combining remote_target and a timestamped filename.
+    The remote destination is formed by appending a timestamped filename to remote_target.
     """
     remote_path = f"{remote_target.rstrip('/')}/{time.strftime('%Y%m%d%H%M%S')}-restored.jpg"
     cmd = ["nice", "-n", "10", "rsync", "-vz", "-e", f"ssh -i {ssh_key}", file_path, remote_path]
@@ -194,9 +207,9 @@ class PersistentMeshtasticSender:
     """
     Uses a persistent Meshtastic connection to send file content.
 
-    Reads a file, splits it into chunks, and sends each chunk sequentially.
-    An optional header (generated from a template) can be prepended to each chunk.
-    Retrying and delay functionality is built in.
+    This class reads a file, splits it into chunks, and sends each chunk sequentially.
+    An optional header (derived from a template) can be prepended to each chunk.
+    Includes retry logic and a delay between sends.
     """
     def __init__(self, file_path: Path, chunk_size: int, ch_index: int, dest: str,
                  connection: str, max_retries: int = DEFAULT_MAX_RETRIES,
@@ -278,7 +291,7 @@ class PersistentMeshtasticSender:
 
     def send_chunk(self, message: str, chunk_index: int, total_chunks: int) -> int:
         """
-        Sends a single chunk (optionally prepended with a header) with retries.
+        Sends a single chunk (optionally prepended with a generated header) with retries.
         
         Returns the number of retries performed on success.
         """
@@ -307,7 +320,7 @@ class PersistentMeshtasticSender:
         return attempt
 
     def send_all_chunks(self):
-        """Reads the file, splits it into chunks, and sequentially sends each chunk."""
+        """Reads file content, splits it into chunks, then sequentially sends each chunk."""
         file_content = self.read_file()
         chunks = self.chunk_content(file_content)
         total_chunks = len(chunks)
@@ -388,12 +401,34 @@ def main():
                         help="Enable debug mode for detailed logging")
     args = parser.parse_args()
 
-    # If upload is enabled, then remote_target and ssh_key are required.
+    # If upload is enabled, check that remote_target and ssh_key are provided.
     if args.upload:
         if not args.remote_target or not args.ssh_key:
             parser.error("--remote_target and --ssh_key are required when --upload is set.")
 
     configure_logging(args.debug)
+
+    # --------- Display Sender Parameters in an ASCII Table ---------
+    param_items = [
+        ("Mode", args.mode),
+        ("Sender Node ID", args.sender_node_id),
+        ("Header", args.header),
+        ("Quality", args.quality),
+        ("Resize", args.resize),
+        ("Output", args.output),
+        ("File Path", args.file_path if args.file_path else args.output),
+        ("Chunk Size", args.chunk_size),
+        ("Destination", args.dest),
+        ("Connection", args.connection),
+        ("ACK Mode", args.ack),
+        ("Max Retries", args.max_retries),
+        ("Retry Delay", args.retry_delay),
+        ("Sleep Delay", args.sleep_delay),
+        ("Upload", args.upload),
+        ("Remote Target", args.remote_target if args.remote_target else "N/A"),
+        ("SSH Key", args.ssh_key if args.ssh_key else "N/A")
+    ]
+    print_table("Sender Parameters", param_items)
 
     if args.mode == "process":
         print("Running image processing pipeline...")
@@ -437,18 +472,17 @@ def main():
         formatted_elapsed = time.strftime("%H:%M:%S", time.gmtime(elapsed_seconds))
         total_attempts = total_chunks + total_failures
         speed = file_size / elapsed_seconds if elapsed_seconds > 0 else file_size
-        summary_str = (
-            "----- Execution Summary -----\n"
-            f"Start Time:          {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(start_time))}\n"
-            f"End Time:            {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(end_time))}\n"
-            f"Time Elapsed:        {formatted_elapsed} (HH:MM:SS)\n"
-            f"Total Chunks Sent:   {total_chunks}\n"
-            f"Total Attempts:      {total_attempts} (includes {total_failures} retries)\n"
-            f"Initial File Size:   {file_size} bytes\n"
-            f"Transmission Speed:  {speed:.2f} bytes/second\n"
-            "------------------------------"
-        )
-        logger.info(summary_str)
+        
+        exec_summary = [
+            ("Start Time", time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(start_time))),
+            ("End Time", time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(end_time))),
+            ("Time Elapsed", formatted_elapsed),
+            ("Total Chunks Sent", total_chunks),
+            ("Total Attempts", f"{total_attempts} (includes {total_failures} retries)"),
+            ("Initial File Size", f"{file_size} bytes"),
+            ("Transmission Speed", f"{speed:.2f} bytes/second")
+        ]
+        print_table("Execution Summary", exec_summary)
     else:  # Mode "all": Run both pipelines in sequence.
         print("Running image processing pipeline...")
         summary = optimize_compress_zip_base64encode_jpg(
@@ -463,7 +497,7 @@ def main():
         if args.upload:
             print("Uploading processed image file...")
             upload_file(args.output, args.remote_target, args.ssh_key)
-        # If file_path is not provided, default to the output file from processing.
+        # Default file_path to the processing output if not provided.
         if not args.file_path:
             args.file_path = args.output
         file_path = Path(args.file_path)
@@ -490,18 +524,17 @@ def main():
         formatted_elapsed = time.strftime("%H:%M:%S", time.gmtime(elapsed_seconds))
         total_attempts = total_chunks + total_failures
         speed = file_size / elapsed_seconds if elapsed_seconds > 0 else file_size
-        summary_str = (
-            "----- Execution Summary -----\n"
-            f"Start Time:          {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(start_time))}\n"
-            f"End Time:            {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(end_time))}\n"
-            f"Time Elapsed:        {formatted_elapsed} (HH:MM:SS)\n"
-            f"Total Chunks Sent:   {total_chunks}\n"
-            f"Total Attempts:      {total_attempts} (includes {total_failures} retries)\n"
-            f"Initial File Size:   {file_size} bytes\n"
-            f"Transmission Speed:  {speed:.2f} bytes/second\n"
-            "------------------------------"
-        )
-        logger.info(summary_str)
+        
+        exec_summary = [
+            ("Start Time", time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(start_time))),
+            ("End Time", time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(end_time))),
+            ("Time Elapsed", formatted_elapsed),
+            ("Total Chunks Sent", total_chunks),
+            ("Total Attempts", f"{total_attempts} (includes {total_failures} retries)"),
+            ("Initial File Size", f"{file_size} bytes"),
+            ("Transmission Speed", f"{speed:.2f} bytes/second")
+        ]
+        print_table("Execution Summary", exec_summary)
 
 if __name__ == "__main__":
     main()
