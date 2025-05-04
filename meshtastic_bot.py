@@ -5,35 +5,30 @@ meshtastic_bot.py - Improved Meshtastic Bot
 This bot uses a persistent TCP connection (via Meshtastic’s API)
 to listen for incoming messages. It applies node and channel filtering.
 When a message is received, the bot performs one of these actions:
-  - If text is exactly "hi!", it replies with "well hai!".
-  - If text is exactly "top!", it replies with basic system info.
-  - If text is exactly "status!", it replies with detailed node status info,
-    sending each line as a separate message.
-  - If text is exactly "sysinfo!", it replies with general system information,
-    sending each line separately.
-  - If text is exactly "df!", it replies with disk usage info.
-  - If text is exactly "temp!", it replies with CPU temperature.
-  - If text is exactly "ip!", it replies with the primary IP address.
-  - If text is exactly "mem!", it replies with memory info.
-  - If text is exactly "joke!", it replies with a random joke.
-  - If text is exactly "help!", it replies with a list of commands.
-  - If text is exactly "ping!", it replies with "pong!".
-  - If text is exactly "time!", it replies with the current local time.
-  - If text is exactly "fortune!", it replies with a random fortune message.
-  - If text is exactly "dmesg!", it replies with the last 5 kernel log messages (truncated if needed).
-  - If text is exactly "signal!", it replies with information about nearby nodes (from the interface’s nodes registry).
-  - Otherwise, if the text begins with a key in COMMANDS (e.g., "sendimage!"),
-    it will close the connection, wait a few seconds, and execute the associated shell script.
-  
-After any shell-script command (which closes the connection), the main loop
-re‑establishes the connection to continue listening.
 
-Usage Examples:
+  • "hi!"       - Replies with "well hai!".
+  • "top!"      - Sends a basic system summary.
+  • "status!"   - Sends detailed node status (each line sent individually).
+  • "sysinfo!"  - Sends general system info (each line sent individually).
+  • "df!"       - Sends disk usage information.
+  • "temp!"     - Sends CPU temperature.
+  • "ip!"       - Sends the primary IP address.
+  • "mem!"      - Sends memory usage info.
+  • "joke!"     - Tells a random joke.
+  • "help!"     - Lists available commands (sent line-by-line).
+  • "ping!"     - Replies with "pong!".
+  • "time!"     - Sends the current local time.
+  • "fortune!"  - Sends a random fortune message.
+  • "dmesg!"    - Sends the last 5 kernel log messages (truncated if too long).
+  • "signal!"   - Lists up to 5 nearby nodes with active signals.
+
+Shell-script commands (e.g. "sendimage!") are also supported. After executing a
+shell command (which closes the connection), the bot automatically re‑establishes
+its connection.
+
+Usage:
   python3 meshtastic_bot.py --tcp_host localhost --channel_index 0 --node_id fb123456
   (Use --channel_index -1 to disable channel filtering)
-
-This script uses robust logging (to both console and a rotating file)
-and includes handling for connection management and direct message replies.
 """
 
 import time
@@ -48,7 +43,7 @@ import shutil
 import socket
 import random
 
-# Import Meshtastic TCP interface and the pubsub mechanism.
+# Import Meshtastic TCP interface and pubsub mechanism.
 from meshtastic.tcp_interface import TCPInterface
 from pubsub import pub
 
@@ -56,16 +51,13 @@ from pubsub import pub
 # ---------------------- Logging Configuration ----------------------
 logger = logging.getLogger("MeshtasticBot")
 logger.setLevel(logging.DEBUG)
-
 formatter = logging.Formatter(
     "%(asctime)s - %(filename)s:%(lineno)d - %(levelname)s - %(message)s"
 )
-
 console_handler = logging.StreamHandler()
 console_handler.setLevel(logging.INFO)
 console_handler.setFormatter(formatter)
 logger.addHandler(console_handler)
-
 file_handler = logging.handlers.RotatingFileHandler(
     "meshtastic_bot.log", maxBytes=1024 * 1024, backupCount=3
 )
@@ -76,9 +68,7 @@ logger.addHandler(file_handler)
 
 # ---------------------- Utility Functions ----------------------
 def get_system_info():
-    """
-    Gather basic system summary (for the "top!" command).
-    """
+    """Return a basic system summary for 'top!'."""
     uname = platform.uname()
     info = [f"System: {uname.system} {uname.node} {uname.release}"]
     try:
@@ -88,32 +78,30 @@ def get_system_info():
         info.append("Load: N/A")
     return " | ".join(info)
 
+
 def get_general_sysinfo():
-    """
-    Gather general system information (for the "sysinfo!" command).
-    """
+    """Return general system info for 'sysinfo!'."""
     uname = platform.uname()
     python_version = platform.python_version()
     return (
-         f"General System Info:\n"
-         f"  System:    {uname.system}\n"
-         f"  Node:      {uname.node}\n"
-         f"  Release:   {uname.release}\n"
-         f"  Version:   {uname.version}\n"
-         f"  Machine:   {uname.machine}\n"
-         f"  Processor: {uname.processor}\n"
-         f"  Python:    {python_version}"
+        f"General System Info:\n"
+        f"  System:    {uname.system}\n"
+        f"  Node:      {uname.node}\n"
+        f"  Release:   {uname.release}\n"
+        f"  Version:   {uname.version}\n"
+        f"  Machine:   {uname.machine}\n"
+        f"  Processor: {uname.processor}\n"
+        f"  Python:    {python_version}"
     )
 
+
 def get_disk_info():
-    """
-    Gather disk usage information (for the "df!" command).
-    """
+    """Return disk usage info for 'df!'."""
     try:
         total, used, free = shutil.disk_usage("/")
-        total_gb = total / (1024**3)
-        used_gb = used / (1024**3)
-        free_gb = free / (1024**3)
+        total_gb = total / (1024 ** 3)
+        used_gb = used / (1024 ** 3)
+        free_gb = free / (1024 ** 3)
         return (
             f"Disk Usage (/):\n"
             f"  Total: {total_gb:.2f} GB\n"
@@ -123,10 +111,9 @@ def get_disk_info():
     except Exception as e:
         return f"Error retrieving disk info: {e}"
 
+
 def get_cpu_temp():
-    """
-    Retrieve CPU temperature (for the "temp!" command).
-    """
+    """Return CPU temperature for 'temp!'."""
     try:
         with open("/sys/class/thermal/thermal_zone0/temp", "r") as f:
             temp_milli = int(f.read().strip())
@@ -135,10 +122,9 @@ def get_cpu_temp():
     except Exception as e:
         return f"Error reading CPU temperature: {e}"
 
+
 def get_ip_address():
-    """
-    Retrieve the primary IP address (for the "ip!" command).
-    """
+    """Return primary IP address for 'ip!'."""
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("8.8.8.8", 80))
@@ -148,10 +134,9 @@ def get_ip_address():
     except Exception as e:
         return f"Error determining IP address: {e}"
 
+
 def get_mem_info():
-    """
-    Gather memory usage information (for the "mem!" command) by reading /proc/meminfo.
-    """
+    """Return memory info for 'mem!' from /proc/meminfo."""
     try:
         meminfo = {}
         with open("/proc/meminfo", "r") as f:
@@ -168,66 +153,63 @@ def get_mem_info():
     except Exception as e:
         return f"Error retrieving memory info: {e}"
 
+
 def get_random_joke():
-    """
-    Return a random joke.
-    """
+    """Return a random joke for 'joke!'."""
     jokes = [
-         "Why do programmers prefer dark mode? Because light attracts bugs!",
-         "I would tell you a UDP joke, but you might not get it.",
-         "Why did the LoRa device get confused? It lost its connection!",
-         "I tried connecting my node to the internet, but it got lost in the clouds!"
+        "Why do programmers prefer dark mode? Because light attracts bugs!",
+        "I would tell you a UDP joke, but you might not get it.",
+        "Why did the LoRa device get confused? It lost its connection!",
+        "I tried connecting my node to the internet, but it got lost in the clouds!"
     ]
     return random.choice(jokes)
 
+
 def get_help_text():
-    """
-    Return help text listing all available commands.
-    """
+    """Return help text listing all available commands."""
     return (
         "Available commands:\n"
-        "  hi!      - Greets you back\n"
-        "  top!     - Basic system info\n"
-        "  status!  - Detailed node status (sent as separate lines)\n"
-        "  sysinfo! - General system information (sent as separate lines)\n"
-        "  df!      - Disk usage info\n"
-        "  temp!    - CPU temperature\n"
-        "  ip!      - IP address\n"
-        "  mem!     - Memory info\n"
-        "  joke!    - Tell a random joke\n"
-        "  help!    - List available commands\n"
-        "  ping!    - Replies with pong!\n"
-        "  time!    - Current local time\n"
-        "  fortune! - A random fortune message\n"
-        "  dmesg!   - Last 5 kernel log messages (truncated if too long)\n"
-        "  signal!  - Lists nearby nodes with direct signal info\n"
+        "  hi!       - Greets you back\n"
+        "  top!      - Basic system info\n"
+        "  status!   - Detailed node status (line-by-line)\n"
+        "  sysinfo!  - General system info (line-by-line)\n"
+        "  df!       - Disk usage info\n"
+        "  temp!     - CPU temperature\n"
+        "  ip!       - IP address\n"
+        "  mem!      - Memory info\n"
+        "  joke!     - Tell a random joke\n"
+        "  help!     - Show this help message\n"
+        "  ping!     - Replies with pong!\n"
+        "  time!     - Current local time\n"
+        "  fortune!  - A random fortune message\n"
+        "  dmesg!    - Last 5 kernel log messages (truncated if needed)\n"
+        "  signal!   - Lists up to 5 nearby nodes with active signals\n"
         "Shell-script commands (if configured): e.g., sendimage!"
     )
 
+
 def get_current_time():
-    """
-    Return the current local date and time (for the "time!" command).
-    """
+    """Return current local time for 'time!'."""
     now = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
     return f"Current Time: {now}"
 
+
 def get_random_fortune():
-    """
-    Return a random fortune.
-    """
+    """Return a random fortune for 'fortune!'."""
     fortunes = [
-         "You will have a pleasant surprise today!",
-         "A thrilling time is in your near future.",
-         "Fortune favors the brave.",
-         "Caution! Unexpected bugs ahead.",
-         "Your code will run without errors today!"
+        "You will have a pleasant surprise today!",
+        "A thrilling time is in your near future.",
+        "Fortune favors the brave.",
+        "Caution! Unexpected bugs ahead.",
+        "Your code will run without errors today!"
     ]
     return random.choice(fortunes)
 
+
 def get_dmesg_info():
     """
-    Retrieve the last 5 lines of the kernel ring buffer (for the "dmesg!" command).
-    If the output is too long, truncate it to 200 characters.
+    Return the last 5 lines from the kernel ring buffer for 'dmesg!'.
+    If the output exceeds 200 characters, truncate it.
     """
     try:
         output = subprocess.check_output("dmesg | tail -n 5", shell=True, universal_newlines=True)
@@ -238,16 +220,29 @@ def get_dmesg_info():
     except Exception as e:
         return f"Error retrieving dmesg output: {e}"
 
+
 def get_signal_info(interface):
     """
-    Gather information about nearby nodes from the interface's node registry.
-    Returns a multi-line string with details about each node (ID, nickname, RSSI, last heard).
+    Return information about up to 5 nearby nodes with active signals from
+    the interface's node registry. A node is considered active if its "rssi"
+    value can be parsed as a number.
     """
     if not hasattr(interface, "nodes") or not interface.nodes:
         return "No nearby node signal data available."
-    info_lines = []
-    info_lines.append("Nearby nodes:")
+    active_nodes = []
     for node_id, node_data in interface.nodes.items():
+        rssi = node_data.get("rssi")
+        try:
+            rssi_value = float(rssi)
+            active_nodes.append((node_id, node_data))
+        except (TypeError, ValueError):
+            continue
+    if not active_nodes:
+        return "No nearby nodes with active signal."
+    active_nodes.sort(key=lambda nd: float(nd[1].get("rssi", -999)), reverse=True)
+    active_nodes = active_nodes[:5]
+    info_lines = ["Nearby nodes with active signal:"]
+    for node_id, node_data in active_nodes:
         nickname = node_data.get("nickname", "N/A")
         rssi = node_data.get("rssi", "Unknown")
         last_heard = node_data.get("lastHeard", "Unknown")
@@ -262,17 +257,13 @@ class MeshtasticBot:
         self.args = args
         self.interface = None
         self.start_time = time.time()  # For uptime reporting
-        # Map shell-script commands.
         self.COMMANDS = {
             "sendimage!": "./send_image.sh",
             "status": "./check_status.sh",
-            # Additional shell-script commands can be added here.
         }
 
     def get_status_info(self):
-        """
-        Gather detailed node status: uptime, platform details, and load averages.
-        """
+        """Return detailed node status information."""
         uptime_seconds = time.time() - self.start_time
         hours = int(uptime_seconds // 3600)
         minutes = int((uptime_seconds % 3600) // 60)
@@ -298,12 +289,10 @@ class MeshtasticBot:
         global logger
         try:
             sender = packet.get("fromId", "")
-            # Filter by node_id if configured.
             if self.args.node_id and sender.lstrip("!") != self.args.node_id:
                 logger.info("Ignoring message from node %s (expected %s).", sender, self.args.node_id)
                 return
 
-            # If channel filtering is enabled, check channel info.
             if self.args.channel_index is not None:
                 packet_channel = packet.get("channel") or packet.get("ch_index")
                 if packet_channel is not None:
@@ -314,7 +303,6 @@ class MeshtasticBot:
                     except Exception as e:
                         logger.warning("Channel filtering error: %s", e)
 
-            # Extract and normalize the message text.
             text = ""
             if "decoded" in packet:
                 text = packet["decoded"].get("text", "")
@@ -327,7 +315,6 @@ class MeshtasticBot:
 
             logger.info("Received message from node %s: %s", sender, text)
 
-            # Direct reply commands.
             if text == "hi!":
                 logger.info("Received 'hi!' command; replying 'well hai!'")
                 if self.interface:
@@ -343,8 +330,7 @@ class MeshtasticBot:
             if text == "status!":
                 logger.info("Received 'status!' command; sending detailed status info")
                 if self.interface:
-                    status_output = self.get_status_info()
-                    for line in status_output.splitlines():
+                    for line in self.get_status_info().splitlines():
                         self.interface.sendText(line)
                         time.sleep(0.5)
                 return
@@ -352,8 +338,7 @@ class MeshtasticBot:
             if text == "sysinfo!":
                 logger.info("Received 'sysinfo!' command; sending general system info")
                 if self.interface:
-                    sysinfo_output = get_general_sysinfo()
-                    for line in sysinfo_output.splitlines():
+                    for line in get_general_sysinfo().splitlines():
                         self.interface.sendText(line)
                         time.sleep(0.5)
                 return
@@ -391,7 +376,9 @@ class MeshtasticBot:
             if text == "help!":
                 logger.info("Received 'help!' command; sending help text")
                 if self.interface:
-                    self.interface.sendText(get_help_text())
+                    for line in get_help_text().splitlines():
+                        self.interface.sendText(line)
+                        time.sleep(0.5)
                 return
 
             if text == "ping!":
@@ -421,13 +408,11 @@ class MeshtasticBot:
             if text == "signal!":
                 logger.info("Received 'signal!' command; sending nearby node signal information")
                 if self.interface:
-                    signal_response = get_signal_info(self.interface)
-                    for line in signal_response.splitlines():
+                    for line in get_signal_info(self.interface).splitlines():
                         self.interface.sendText(line)
                         time.sleep(0.5)
                 return
 
-            # For shell-script driven commands.
             for cmd, script in self.COMMANDS.items():
                 if text.startswith(cmd):
                     logger.info("Command '%s' recognized from node %s; executing script: %s", cmd, sender, script)
@@ -496,10 +481,8 @@ def main():
     parser.add_argument("--node_id", type=str, default=None,
                         help="Filter messages by sender node ID (default: None).")
     args = parser.parse_args()
-
     if args.channel_index == -1:
         args.channel_index = None
-
     bot = MeshtasticBot(args)
     bot.run()
 
