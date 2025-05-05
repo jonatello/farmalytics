@@ -1,55 +1,31 @@
 #!/usr/bin/env python3
 """
-meshbot.py - Combined Meshtastic Bot (MeshBot)
+Production‑Ready Meshbot Unified Script
 
-This integrated script combines sender, receiver, postprocessing, filtering, and bot
-functionalities into one file.
+This script consolidates three modes of operation into one production‑quality utility:
+  • Bot Mode: A persistent bot that listens for Meshtastic messages and responds to commands.
+  • Sender Mode: Processes an image and/or sends file content (in chunks) via a persistent Meshtastic connection.
+  • Receiver Mode: Asynchronously collects messages, assembles Base64 payloads, decodes/decompresses them,
+                   and optionally uploads the resulting file using rsync.
 
-Service Modes (select using --service):
-  bot       - Run the interactive bot (listens for commands such as hi!, cpu!, status!,
-              sysinfo!, df!, temp!, ip!, mem!, joke!, help!, ping!, time!, fortune!, dmesg!,
-              signal!, sendimage!<query>, simple!<message>).
-  sender    - Run only the sender functionality. In complex mode (default for sender),
-              it can run:
-                • Image processing pipeline (capture, optimize, resize, compress, Base64 encode).
-                • Persistent file sending (splitting file content into chunks and sending over Meshtastic).
-              Use the --simple flag (with --message) for a plain text message.
-  receiver  - Run only the receiver functionality. It collects asynchronous incoming messages,
-              filters and assembles Base64 fragments, decodes and decompresses them into an image if
-              --process_image is set, and can optionally upload the file.
-  meshbot   - Runs both the bot functionality and receiver concurrently.
+Usage:
+  python3 meshbot.py <mode> [options]
 
-Usage examples:
- • Full bot:
-      python3 meshbot.py --service bot --tcp_host localhost --channel_index 0 --node_id fb123456
- • Sender (complex mode):
-      python3 meshbot.py --service sender --mode all --sender_node_id eb314389 --header nc --process_image --upload \
-          --quality 75 --resize 800x600 --remote_target "user@host:/remote/path" --ssh_key "/path/to/id_rsa" \
-          --chunk_size 200 --dest '!47a78d36' --connection tcp --ack --sleep_delay 1
- • Sender (simple mode):
-      python3 meshbot.py --service sender --simple --message "Hello MeshBot!"
- • Receiver:
-      python3 meshbot.py --service receiver --run_time 5 --sender_node_id fb123456 --header fb \
-          --output restored.jpg --remote_target "user@host:/remote/path" --ssh_key "/path/to/id_rsa" \
-          --connection tcp --tcp_host localhost --poll_interval 10 --inactivity_timeout 60 --process_image --upload --debug
- • Combined meshbot (bot + receiver):
-      python3 meshbot.py --service meshbot --tcp_host localhost --channel_index 0 --node_id fb123456 \
-          --run_time 5 --sender_node_id fb123456 --header fb --output restored.jpg \
-          --remote_target "user@host:/remote/path" --ssh_key "/path/to/id_rsa" --connection tcp \
-          --poll_interval 10 --inactivity_timeout 60 --process_image --upload --debug
+Modes:
+  bot       - Run Bot mode.
+  sender    - Run Sender mode.
+  receiver  - Run Receiver mode.
+
+For detailed help on each mode, run:
+  python3 meshbot.py <mode> --help
 """
 
-# ======================================================
-#        Imports & Logging Setup
-# ======================================================
 import argparse
 import asyncio
 import base64
 import gzip
 import logging
-import logging.handlers
 import os
-import platform
 import re
 import shutil
 import signal
@@ -66,34 +42,79 @@ from urllib.parse import parse_qs
 import requests
 import zopfli.gzip
 
-from meshtastic.tcp_interface import TCPInterface
-from meshtastic.serial_interface import SerialInterface
-from pubsub import pub
+# Attempt to import Meshtastic libraries.
+try:
+    from meshtastic.tcp_interface import TCPInterface
+except ImportError:
+    TCPInterface = None
+try:
+    from meshtastic.serial_interface import SerialInterface
+except ImportError:
+    SerialInterface = None
+try:
+    from pubsub import pub
+except ImportError:
+    pub = None
 
-def configure_logging(debug_mode):
-    level = logging.DEBUG if debug_mode else logging.INFO
-    formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setFormatter(formatter)
-    file_handler = logging.FileHandler("debug_messages.log")
-    file_handler.setFormatter(formatter)
-    logging.basicConfig(level=level, handlers=[console_handler, file_handler])
+# ---------------------------------------------------------------------------
+# Logging and Common Utility Functions
+# ---------------------------------------------------------------------------
+def configure_logging(debug_mode: bool) -> None:
+    """
+    Configures logging for the application.
+    
+    Args:
+      debug_mode: If True, set logging to DEBUG; otherwise INFO.
+    """
+    log_level = logging.DEBUG if debug_mode else logging.INFO
+    logging.basicConfig(
+        level=log_level,
+        format="%(asctime)s - %(levelname)s - %(message)s",
+        handlers=[
+            logging.StreamHandler(sys.stdout),
+            logging.FileHandler("debug_messages.log")
+        ]
+    )
 
-logger = logging.getLogger("MeshBot")
+logger = logging.getLogger("Meshbot")
 
-# ======================================================
-#                Utility Functions
-# ======================================================
-def get_system_info():
+def print_table(title: str, items: list) -> None:
+    """
+    Prints an ASCII table with the given title and key-value tuples.
+    
+    Args:
+      title: Title of the table.
+      items: List of (key, value) tuples.
+    """
+    table_width1 = 30
+    table_width2 = 50
+    separator = "+" + "-" * table_width1 + "+" + "-" * table_width2 + "+"
+    title_line = "| {:^{w1}} | {:^{w2}} |".format(title, "", w1=table_width1 - 2, w2=table_width2 - 2)
+    print(separator)
+    print(title_line)
+    print(separator)
+    for key, value in items:
+        print("| {:<{w1}} | {:<{w2}} |".format(key, str(value), w1=table_width1 - 2, w2=table_width2 - 2))
+    print(separator)
+
+# ---------------------------------------------------------------------------
+# System Information Utilities (Common to all modes)
+# ---------------------------------------------------------------------------
+def get_system_info() -> str:
+    """Returns basic system information."""
+    import platform
     uname = platform.uname()
+    info = f"System: {uname.system} {uname.node} {uname.release}"
     try:
         loadavg = os.getloadavg()
-        load = f"{loadavg[0]:.2f}, {loadavg[1]:.2f}, {loadavg[2]:.2f}"
+        info += f" | Load: {loadavg[0]:.2f}, {loadavg[1]:.2f}, {loadavg[2]:.2f}"
     except Exception:
-        load = "N/A"
-    return f"System: {uname.system} {uname.node} {uname.release} | Load: {load}"
+        info += " | Load: N/A"
+    return info
 
-def get_general_sysinfo():
+def get_general_sysinfo() -> str:
+    """Returns a detailed system info summary."""
+    import platform
     uname = platform.uname()
     return (
         f"General System Info:\n"
@@ -102,26 +123,29 @@ def get_general_sysinfo():
         f"  Release:   {uname.release}\n"
         f"  Version:   {uname.version}\n"
         f"  Machine:   {uname.machine}\n"
-        f"  Processor: {uname.processor}\n"
-        f"  Python:    {platform.python_version()}"
+        f"  Processor: {uname.processor}"
     )
 
-def get_disk_info():
+def get_disk_info() -> str:
+    """Returns disk usage statistics."""
     try:
         total, used, free = shutil.disk_usage("/")
-        return f"Disk: Total: {total/(1024**3):.2f}GB, Used: {used/(1024**3):.2f}GB, Free: {free/(1024**3):.2f}GB"
+        return (f"Disk Usage (/): Total: {total/(1024**3):.2f} GB, "
+                f"Used: {used/(1024**3):.2f} GB, Free: {free/(1024**3):.2f} GB")
     except Exception as e:
         return f"Error retrieving disk info: {e}"
 
-def get_cpu_temp():
+def get_cpu_temp() -> str:
+    """Returns CPU temperature if available."""
     try:
         with open("/sys/class/thermal/thermal_zone0/temp", "r") as f:
-            temp = int(f.read().strip())/1000.0
+            temp = int(f.read().strip()) / 1000.0
         return f"CPU Temperature: {temp:.1f}°C"
     except Exception as e:
-        return f"Error reading CPU temp: {e}"
+        return f"Error reading CPU temperature: {e}"
 
-def get_ip_address():
+def get_ip_address() -> str:
+    """Returns the primary IP address of the host."""
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("8.8.8.8", 80))
@@ -129,20 +153,26 @@ def get_ip_address():
         s.close()
         return f"IP Address: {ip}"
     except Exception as e:
-        return f"Error obtaining IP: {e}"
+        return f"Error determining IP address: {e}"
 
-def get_mem_info():
+def get_mem_info() -> str:
+    """Returns memory usage information (in MB)."""
     try:
+        meminfo = {}
         with open("/proc/meminfo", "r") as f:
-            meminfo = {line.split(':')[0]: int(line.split()[1]) for line in f if ':' in line}
-        total = meminfo.get("MemTotal", 0)/1024
-        free = meminfo.get("MemFree", 0)/1024
-        avail = meminfo.get("MemAvailable", free)/1024
+            for line in f:
+                parts = line.split(":")
+                if len(parts) > 1:
+                    meminfo[parts[0].strip()] = int(parts[1].strip().split()[0])
+        total = meminfo.get("MemTotal", 0) / 1024
+        free = meminfo.get("MemFree", 0) / 1024
+        avail = meminfo.get("MemAvailable", free) / 1024
         return f"Memory (MB): Total: {total:.0f}, Free: {free:.0f}, Available: {avail:.0f}"
     except Exception as e:
         return f"Error retrieving memory info: {e}"
 
-def get_random_joke():
+def get_random_joke() -> str:
+    """Returns a random joke."""
     jokes = [
         "Why do programmers prefer dark mode? Because light attracts bugs!",
         "I would tell you a UDP joke, but you might not get it.",
@@ -151,158 +181,311 @@ def get_random_joke():
     ]
     return random.choice(jokes)
 
-def get_help_text():
+def get_help_text() -> str:
+    """Returns a help text listing available commands."""
     return (
         "Available commands:\n"
-        "  hi!       - Greets you back\n"
-        "  cpu!      - System/CPU info\n"
-        "  status!   - Detailed node status\n"
-        "  sysinfo!  - General system info\n"
-        "  df!       - Disk usage info\n"
-        "  temp!     - CPU temperature\n"
-        "  ip!       - IP address\n"
-        "  mem!      - Memory info\n"
-        "  joke!     - A random joke\n"
-        "  help!     - List commands\n"
-        "  ping!     - Replies with pong!\n"
-        "  time!     - Current time\n"
-        "  fortune!  - A random fortune\n"
-        "  dmesg!    - Last 5 kernel messages\n"
-        "  signal!   - Nearby node signals\n"
-        "  sendimage!<query> - Send image with query parameters\n"
-        "  simple!<message>  - Send a simple text message"
+        "  hi!        - Greets you back\n"
+        "  cpu!       - Basic system/CPU info\n"
+        "  status!    - Detailed node status\n"
+        "  sysinfo!   - General system info\n"
+        "  df!        - Disk usage info\n"
+        "  temp!      - CPU temperature\n"
+        "  ip!        - IP address\n"
+        "  mem!       - Memory info\n"
+        "  joke!      - Tell a joke\n"
+        "  help!      - Show help text\n"
+        "  ping!      - Reply with pong!\n"
+        "  time!      - Current local time\n"
+        "  fortune!   - Random fortune\n"
+        "  dmesg!     - Kernel messages (last 5 lines)\n"
+        "  signal!    - Nearby node signals\n"
+        "  sendimage! - Process and send image via query-string parameters\n"
     )
 
-def get_current_time():
+def get_current_time() -> str:
+    """Returns the current local time as a formatted string."""
     return f"Current Time: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}"
 
-def get_random_fortune():
+def get_random_fortune() -> str:
+    """Returns a random fortune."""
     fortunes = [
         "You will have a pleasant surprise today!",
         "A thrilling time is in your near future.",
         "Fortune favors the brave.",
-        "Caution! Unexpected bugs ahead.",
+        "Unexpected bugs ahead!",
         "Your code will run without errors today!"
     ]
     return random.choice(fortunes)
 
-def get_dmesg_info():
+def get_dmesg_info() -> str:
+    """Returns the last 5 lines of the kernel log (truncated if needed)."""
     try:
         output = subprocess.check_output("sudo dmesg | tail -n 5", shell=True, universal_newlines=True)
-        if len(output) > 200:
-            output = output[:200] + "..."
-        if not output.strip():
-            return "No kernel messages available."
-        return f"Kernel messages (last 5):\n{output}"
+        return f"Kernel messages:\n{output[:200] + '...' if len(output) > 200 else output}"
     except Exception as e:
-        return f"Error retrieving dmesg output: {e}"
+        return f"Error retrieving dmesg: {e}"
 
-def get_signal_info(interface):
-    if not hasattr(interface, "nodes") or not interface.nodes:
-        return "No nearby node signal data available."
-    active_nodes = []
-    for nid, ndata in interface.nodes.items():
+def get_signal_info(interface) -> str:
+    """Returns information about nearby nodes with active signal."""
+    if not interface or not hasattr(interface, "nodes") or not interface.nodes:
+        return "No signal data available."
+    active = []
+    for node_id, data in interface.nodes.items():
         try:
-            float(ndata.get("rssi", -999))
-            active_nodes.append((nid, ndata))
-        except (TypeError, ValueError):
+            float(data.get("rssi", -999))
+            active.append((node_id, data))
+        except Exception:
             continue
-    if not active_nodes:
-        return "No nearby nodes with active signal."
-    active_nodes.sort(key=lambda x: float(x[1].get("rssi", -999)), reverse=True)
-    active_nodes = active_nodes[:5]
-    lines = ["Nearby nodes with active signals:"]
-    for nid, ndata in active_nodes:
-        lines.append(f"Node {nid} (nickname: {ndata.get('nickname','N/A')}) - RSSI: {ndata.get('rssi','Unknown')}, Last Heard: {ndata.get('lastHeard','Unknown')}")
+    if not active:
+        return "No active signals."
+    active.sort(key=lambda x: float(x[1].get("rssi", -999)), reverse=True)
+    lines = ["Nearby nodes with active signal:"]
+    for nid, data in active[:5]:
+        lines.append(f"Node {nid}: RSSI {data.get('rssi','N/A')}")
     return "\n".join(lines)
 
-def print_table(title, items):
-    w1, w2 = 30, 50
-    sep = "+" + "-"*w1 + "+" + "-"*w2 + "+"
-    print(sep)
-    print("| {:^{w1}} | {:^{w2}} |".format(title, "", w1=w1-2, w2=w2-2))
-    print(sep)
-    for key, value in items:
-        print("| {:<{w1}} | {:<{w2}} |".format(key, str(value), w1=w1-2, w2=w2-2))
-    print(sep)
-
-def build_sender_command(params):
-    defaults = {
-        "mode": "all",
-        "sender_node_id": "eb314389",
-        "header": "nc",
-        "quality": "75",
-        "resize": "800x600",
-        "remote_target": "",
-        "ssh_key": "",
-        "chunk_size": "180",
-        "dest": "!47a78d36",
-        "connection": "tcp",
-        "sleep_delay": "1",
-        "process_image": "true",
-        "upload": "false",
-        "ack": "false"
-    }
-    for key, value_list in params.items():
-        if value_list:
-            defaults[key] = value_list[0]
-    args = []
-    mapping = {
-        "mode": "--mode",
-        "sender_node_id": "--sender_node_id",
-        "header": "--header",
-        "quality": "--quality",
-        "resize": "--resize",
-        "remote_target": "--remote_target",
-        "ssh_key": "--ssh_key",
-        "chunk_size": "--chunk_size",
-        "dest": "--dest",
-        "connection": "--connection",
-        "sleep_delay": "--sleep_delay"
-    }
-    for key, flag in mapping.items():
-        args.append(flag)
-        args.append(defaults[key])
-    for bool_key in ["process_image", "upload", "ack"]:
-        if defaults[bool_key].lower() in ("true", "1"):
-            args.append(f"--{bool_key}")
-    return args
-
-# ======================================================
-#               MeshSender Class (Sender)
-# ======================================================
-
-class MeshSender:
+# ---------------------------------------------------------------------------
+# Connection Manager and Signal Handling (Shared)
+# ---------------------------------------------------------------------------
+class MeshtasticConnectionManager:
     """
-    Encapsulates persistent sending functionality:
-     - Includes image processing pipeline (capture, optimize, resize, compress, Base64 encoding).
-     - Supports file upload via rsync.
-     - Reads file content, splits into chunks, and sends them over a persistent Meshtastic connection.
+    Manages a Meshtastic connection (TCP or Serial) in a unified fashion.
     """
-    @staticmethod
-    def send_simple_message(message: str) -> str:
-        print(f"---- Sending simple message ----\nMessage: {message}")
-        return "Simple message sent successfully."
+    def __init__(self, tcp_host: str = "localhost", connection: str = "tcp"):
+        self.tcp_host = tcp_host
+        self.connection_type = connection
+        self.interface = None
 
+    def open_connection(self, on_receive_callback=None):
+        """
+        Opens a connection using the specified type and registers a callback.
+        
+        Args:
+          on_receive_callback: Function to call on receiving messages.
+          
+        Returns:
+          The Meshtastic interface object.
+        """
+        if self.connection_type == "tcp":
+            if TCPInterface is None:
+                logger.error("TCPInterface not available!")
+                sys.exit(1)
+            try:
+                self.interface = TCPInterface(hostname=self.tcp_host)
+                if pub and on_receive_callback:
+                    pub.subscribe(on_receive_callback, "meshtastic.receive")
+                logger.info("Connected via TCP on %s", self.tcp_host)
+            except Exception as e:
+                logger.error("Error establishing TCP connection: %s", e)
+                sys.exit(1)
+        elif self.connection_type == "serial":
+            if SerialInterface is None:
+                logger.error("SerialInterface not available!")
+                sys.exit(1)
+            try:
+                self.interface = SerialInterface()
+                if on_receive_callback:
+                    self.interface.onReceive = on_receive_callback
+                logger.info("Connected via Serial.")
+            except Exception as e:
+                logger.error("Error establishing Serial connection: %s", e)
+                sys.exit(1)
+        else:
+            logger.error("Unknown connection type: %s", self.connection_type)
+            sys.exit(1)
+        return self.interface
+
+    def close_connection(self):
+        if self.interface:
+            try:
+                self.interface.close()
+                logger.info("Connection closed.")
+            except Exception as e:
+                logger.error("Error closing connection: %s", e)
+
+def setup_signal_handlers(obj) -> None:
+    """
+    Sets up signal handling for graceful shutdown.
+    The passed object is expected to have either a 'running' attribute or a 'close_connection' method.
+    """
+    def handler(sig, frame):
+        logger.info("CTRL+C detected, shutting down...")
+        if hasattr(obj, "running"):
+            obj.running = False
+        if hasattr(obj, "close_connection"):
+            obj.close_connection()
+        sys.exit(0)
+    signal.signal(signal.SIGINT, handler)
+    signal.signal(signal.SIGTERM, handler)
+
+# ---------------------------------------------------------------------------
+# File Upload Helper (shared by Sender and Receiver)
+# ---------------------------------------------------------------------------
+def upload_file(file_path: str, remote_target: str, ssh_key: str) -> None:
+    """
+    Uploads the specified file to a remote destination with a timestamped filename.
+    Uses rsync with low CPU priority.
+    """
+    remote_path = f"{remote_target.rstrip('/')}/{time.strftime('%Y%m%d%H%M%S')}-restored.jpg"
+    cmd = ["nice", "-n", "10", "rsync", "-vz", "-e", f"ssh -i {ssh_key}", file_path, remote_path]
+    try:
+        subprocess.check_call(cmd)
+        logger.info("File uploaded to %s", remote_path)
+    except subprocess.CalledProcessError as e:
+        logger.error("Upload failed: %s", e)
+        sys.exit(1)
+# ---------------------------------------------------------------------------
+# MODE 1: Bot Mode Implementation
+# ---------------------------------------------------------------------------
+class BotMode:
     def __init__(self, args):
         self.args = args
-        self.file_path = Path(args.file_path) if args.file_path else Path(args.output)
-        self.chunk_size = args.chunk_size
-        self.ch_index = args.ch_index
-        self.dest = args.dest
-        self.connection = args.connection.lower()
-        self.max_retries = args.max_retries
-        self.retry_delay = args.retry_delay
-        self.header_template = args.header
-        self.use_ack = args.ack
-        self.sleep_delay = args.sleep_delay
+        self.node_id = args.node_id if hasattr(args, "node_id") else None
+        self.channel_index = args.channel_index if hasattr(args, "channel_index") else None
+        self.conn_manager = MeshtasticConnectionManager(tcp_host=args.tcp_host, connection="tcp")
+        self.start_time = time.time()
+
+    def on_receive(self, packet, interface=None):
+        sender = packet.get("fromId", "")
+        # Filter based on node ID if specified.
+        if self.node_id and sender.lstrip("!") != self.node_id:
+            logger.info("Ignoring message from node %s (expected %s).", sender, self.node_id)
+            return
+
+        # Retrieve and clean the text message.
+        text = (packet.get("decoded", {}).get("text", "") or packet.get("text", "")).strip().lower()
+        if not text:
+            return
+        logger.info("Received message from node %s: %s", sender, text)
+
+        # Process commands and respond accordingly.
+        if text == "hi!":
+            if self.conn_manager.interface:
+                self.conn_manager.interface.sendText("well hai!")
+            return
+        elif text == "cpu!":
+            if self.conn_manager.interface:
+                self.conn_manager.interface.sendText(get_system_info())
+            return
+        elif text == "sysinfo!":
+            if self.conn_manager.interface:
+                self.conn_manager.interface.sendText(get_general_sysinfo())
+            return
+        elif text == "df!":
+            if self.conn_manager.interface:
+                self.conn_manager.interface.sendText(get_disk_info())
+            return
+        elif text == "temp!":
+            if self.conn_manager.interface:
+                self.conn_manager.interface.sendText(get_cpu_temp())
+            return
+        elif text == "ip!":
+            if self.conn_manager.interface:
+                self.conn_manager.interface.sendText(get_ip_address())
+            return
+        elif text == "mem!":
+            if self.conn_manager.interface:
+                self.conn_manager.interface.sendText(get_mem_info())
+            return
+        elif text == "joke!":
+            if self.conn_manager.interface:
+                self.conn_manager.interface.sendText(get_random_joke())
+            return
+        elif text == "help!":
+            if self.conn_manager.interface:
+                for line in get_help_text().splitlines():
+                    self.conn_manager.interface.sendText(line)
+            return
+        elif text == "ping!":
+            if self.conn_manager.interface:
+                self.conn_manager.interface.sendText("pong!")
+            return
+        elif text == "time!":
+            if self.conn_manager.interface:
+                self.conn_manager.interface.sendText(get_current_time())
+            return
+        elif text == "fortune!":
+            if self.conn_manager.interface:
+                self.conn_manager.interface.sendText(get_random_fortune())
+            return
+        elif text == "dmesg!":
+            if self.conn_manager.interface:
+                self.conn_manager.interface.sendText(get_dmesg_info())
+            return
+        elif text == "signal!":
+            if self.conn_manager.interface:
+                self.conn_manager.interface.sendText(get_signal_info(self.conn_manager.interface))
+            return
+        elif text.startswith("sendimage!"):
+            # Delegate processing to sender mode.
+            query_string = text[len("sendimage!"):].strip()
+            cmd = [
+                "python3", sys.argv[0], "sender",
+                "--mode", "all",
+                "--sender_node_id", self.node_id,
+                "--header", query_string
+            ]
+            logger.info("Executing sendimage! command: %s", " ".join(cmd))
+            self.conn_manager.close_connection()
+            time.sleep(5)
+            subprocess.run(cmd, check=True)
+            return
+        else:
+            logger.info("No matching command for message: %s", text)
+
+    def run(self):
+        self.conn_manager.open_connection(on_receive_callback=self.on_receive)
+        setup_signal_handlers(self)
+        logger.info("Bot mode running. Listening for messages...")
+        try:
+            while True:
+                if self.conn_manager.interface is None:
+                    logger.info("Re-establishing connection...")
+                    self.conn_manager.open_connection(on_receive_callback=self.on_receive)
+                time.sleep(1)
+        except KeyboardInterrupt:
+            logger.info("KeyboardInterrupt received in Bot mode.")
+        finally:
+            self.conn_manager.close_connection()
+
+def run_bot_mode(args):
+    bot = BotMode(args)
+    bot.run()
+# ---------------------------------------------------------------------------
+# MODE 2: Sender Mode Implementation (Production)
+# ---------------------------------------------------------------------------
+# Constants for sender mode.
+DEFAULT_MAX_RETRIES = 10
+DEFAULT_RETRY_DELAY = 1      # in seconds
+DEFAULT_SLEEP_DELAY = 1.0    # in seconds
+
+class PersistentMeshtasticSender:
+    """
+    Uses a persistent Meshtastic connection to send file content in fixed-size chunks.
+    Optionally, a header is prepended to each chunk for identification/reassembly.
+    """
+    def __init__(self, file_path: Path, chunk_size: int, ch_index: int, dest: str,
+                 connection: str, max_retries: int = DEFAULT_MAX_RETRIES, 
+                 retry_delay: int = DEFAULT_RETRY_DELAY, header_template: str = None,
+                 use_ack: bool = False, sleep_delay: float = DEFAULT_SLEEP_DELAY):
+        self.file_path = file_path
+        self.chunk_size = chunk_size
+        self.ch_index = ch_index
+        self.dest = dest
+        self.connection = connection.lower()
+        self.max_retries = max_retries
+        self.retry_delay = retry_delay
+        self.header_template = header_template
+        self.use_ack = use_ack
+        self.sleep_delay = sleep_delay
         self.interface = None
 
     def read_file(self) -> str:
         try:
             return self.file_path.read_text()
         except Exception as e:
-            logger.error(f"Error reading file '{self.file_path}': {e}")
+            logger.error("Error reading file '%s': %s", self.file_path, e)
             sys.exit(1)
 
     def get_file_size(self) -> int:
@@ -314,64 +497,49 @@ class MeshSender:
     def generate_header(self, index: int, total_chunks: int) -> str:
         if not self.header_template:
             return ""
-        if "#" in self.header_template:
+        if '#' in self.header_template:
             pattern = re.compile(r"(#+)")
             match = pattern.search(self.header_template)
             if match:
                 width = len(match.group(0))
-                counter_str = f"{index:0{width}d}"
-                header = pattern.sub(counter_str, self.header_template, count=1)
-                if not header.endswith('!'):
-                    header += "!"
-                return header
-        width = len(str(total_chunks))
-        return f"{self.header_template}{index:0{width}d}!"
+                header = pattern.sub(f"{index:0{width}d}", self.header_template, count=1)
+                return header if header.endswith("!") else header + "!"
+            else:
+                return f"{self.header_template}{index}!"
+        else:
+            width = len(str(total_chunks))
+            return f"{self.header_template}{index:0{width}d}!"
 
     def open_connection(self):
-        if self.connection == "tcp":
-            logger.info("Establishing persistent TCP connection for sender...")
-            try:
-                self.interface = TCPInterface(hostname="localhost")
-            except Exception as e:
-                logger.error(f"Error establishing TCP connection: {e}")
-                sys.exit(1)
-        elif self.connection == "serial":
-            logger.info("Establishing persistent Serial connection for sender...")
-            try:
-                self.interface = SerialInterface()
-            except Exception as e:
-                logger.error(f"Error establishing Serial connection: {e}")
-                sys.exit(1)
-        else:
-            logger.error(f"Unknown connection type: {self.connection}")
-            sys.exit(1)
-        logger.info("Sender connection established.")
+        conn_mgr = MeshtasticConnectionManager(tcp_host="localhost", connection=self.connection)
+        self.interface = conn_mgr.open_connection()
+        return self.interface
 
     def close_connection(self):
-        try:
-            self.interface.close()
-            logger.info("Sender persistent connection closed.")
-        except Exception as e:
-            logger.error(f"Error closing sender connection: {e}")
+        if self.interface:
+            try:
+                self.interface.close()
+            except Exception as e:
+                logger.error("Error closing sender connection: %s", e)
 
     def send_chunk(self, message: str, chunk_index: int, total_chunks: int) -> int:
-        if self.header_template:
-            header = self.generate_header(chunk_index, total_chunks)
-            full_message = header + message
-        else:
-            full_message = message
+        header = self.generate_header(chunk_index, total_chunks) if self.header_template else ""
+        full_message = header + message
         attempt = 0
         while attempt < self.max_retries:
             try:
                 self.interface.sendText(full_message, wantAck=self.use_ack)
-                logger.info(f"Sent chunk {chunk_index}/{total_chunks} on attempt {attempt+1}/{self.max_retries}")
+                logger.info("Sent chunk %d/%d with header '%s' (Attempt %d)", 
+                            chunk_index, total_chunks, header, attempt+1)
                 return attempt
             except Exception as e:
                 attempt += 1
-                logger.warning(f"Retry {attempt}/{self.max_retries} for chunk {chunk_index}: {e}")
+                logger.warning("Retry %d/%d for chunk %d due to error: %s", 
+                               attempt, self.max_retries, chunk_index, e)
                 time.sleep(self.retry_delay)
                 if attempt == self.max_retries:
-                    logger.error(f"Aborting after {self.max_retries} retries for chunk {chunk_index}.")
+                    logger.error("Aborting after %d retries for chunk %d.", 
+                                 self.max_retries, chunk_index)
                     sys.exit(1)
         return attempt
 
@@ -379,41 +547,69 @@ class MeshSender:
         content = self.read_file()
         chunks = self.chunk_content(content)
         total_chunks = len(chunks)
-        logger.info(f"Total chunks to send: {total_chunks}")
         total_failures = 0
         for i, chunk in enumerate(chunks, start=1):
-            failures = self.send_chunk(chunk, i, total_chunks)
-            total_failures += failures
+            total_failures += self.send_chunk(chunk, i, total_chunks)
             time.sleep(self.sleep_delay)
         return total_chunks, total_failures
 
-def setup_sender_signal_handlers(sender: MeshSender):
-    def handler(sig, frame):
-        logger.info("CTRL+C detected in sender. Closing connection...")
+def setup_sender_signal_handlers(sender: PersistentMeshtasticSender) -> None:
+    setup_signal_handlers(sender)
+
+def run_sender_mode(args) -> None:
+    if args.mode == "process":
+        logger.info("Running image processing pipeline...")
+        summary = optimize_compress_zip_base64encode_jpg(
+            quality=args.quality,
+            resize=args.resize,
+            snapshot_url="http://localhost:8080/0/action/snapshot",
+            output_file=args.output
+        )
+        for k, v in summary.items():
+            logger.info("%s: %s", k, v)
+        if args.upload:
+            logger.info("Uploading processed image file...")
+            upload_file(args.output, args.remote_target, args.ssh_key)
+    else:
+        if args.mode == "send" and not args.file_path:
+            logger.error("--file_path is required for send mode.")
+            sys.exit(1)
+        file_path = Path(args.file_path) if args.file_path else Path(args.output)
+        sender = PersistentMeshtasticSender(
+            file_path=file_path,
+            chunk_size=args.chunk_size,
+            ch_index=args.ch_index,
+            dest=args.dest,
+            connection=args.connection,
+            max_retries=args.max_retries,
+            retry_delay=args.retry_delay,
+            header_template=args.header,
+            use_ack=args.ack,
+            sleep_delay=args.sleep_delay
+        )
+        setup_sender_signal_handlers(sender)
+        start_time = time.time()
+        sender.open_connection()
+        total_chunks, total_failures = sender.send_all_chunks()
         sender.close_connection()
-        sys.exit(0)
-    signal.signal(signal.SIGINT, handler)
-    signal.signal(signal.SIGTERM, handler)
-
-# ======================================================
-#              MeshProcessor Class (Receiver)
-# ======================================================
-
-class MeshProcessor:
-    """
-    Receives and processes Meshtastic messages:
-
-      - Filters incoming messages by sender_node_id and expected header.
-      - Combines Base64 fragments from messages.
-      - If --process_image is set, decodes and decompresses the combined data to produce an image.
-      - Optionally uploads the image via rsync.
-      - Prints a performance summary.
-    """
+        elapsed = time.time() - start_time
+        file_size = sender.get_file_size()
+        summary_items = [
+            ("Start Time", time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(start_time))),
+            ("Time Elapsed", time.strftime("%H:%M:%S", time.gmtime(elapsed))),
+            ("Total Chunks Sent", total_chunks),
+            ("File Size", f"{file_size} bytes")
+        ]
+        print_table("Sender Execution Summary", summary_items)
+# ---------------------------------------------------------------------------
+# MODE 3: Receiver Mode Implementation (Production)
+# ---------------------------------------------------------------------------
+class MeshtasticReceiver:
     def __init__(self, args):
         self.args = args
-        self.received_messages = {}
+        self.received_messages = {}  # Mapping: header number -> full message text
         self.duplicate_count = 0
-        self.combined_messages = []
+        self.combined_messages = []  # List for holding payloads (after header removal)
         self.state_lock = Lock()
         self.running = True
         self.iface = None
@@ -423,17 +619,7 @@ class MeshProcessor:
         self.header_digit_pattern = re.compile(r"\d+")
         self.last_progress_time = time.time()
 
-    def print_table(self, title, items):
-        w1, w2 = 30, 50
-        sep = "+" + "-"*w1 + "+" + "-"*w2 + "+"
-        print(sep)
-        print("| {:^{w1}} | {:^{w2}} |".format(title, "", w1=w1-2, w2=w2-2))
-        print(sep)
-        for key, value in items:
-            print("| {:<{w1}} | {:<{w2}} |".format(key, str(value), w1=w1-2, w2=w2-2))
-        print(sep)
-
-    def print_startup_summary(self):
+    def print_startup_summary(self) -> None:
         params = [
             ("run_time (min)", self.args.run_time),
             ("sender_node_id", self.args.sender_node_id),
@@ -449,640 +635,258 @@ class MeshProcessor:
             ("upload", self.args.upload),
             ("debug", self.args.debug),
         ]
-        self.print_table("Startup Summary", params)
+        print_table("Receiver Startup Summary", params)
 
-    def onReceive(self, packet, interface=None):
+    def print_performance_summary(self, total_runtime: float, total_msgs: int,
+                                    missing_msgs: int, file_size) -> None:
+        stats = [
+            ("Total Runtime (sec)", f"{total_runtime:.2f}"),
+            ("Total Unique Messages", total_msgs),
+            ("Highest Header Processed", self.highest_header),
+            ("Duplicate Messages", self.duplicate_count),
+            ("Estimated Missing Msgs", missing_msgs),
+            ("Transferred File Size (bytes)", file_size),
+        ]
+        print_table("Receiver Performance Summary", stats)
+
+    def on_receive(self, packet, interface=None) -> None:
+        """
+        Processes an incoming message packet.
+        Filters by sender_node_id and expected header.
+        Extracts the numeric header and stores the message.
+        """
         try:
             raw_sender = packet.get("fromId")
             if not raw_sender or raw_sender.lstrip("!") != self.args.sender_node_id:
-                logger.debug(f"Ignored message from sender '{raw_sender}'; expected '{self.args.sender_node_id}'.")
+                logger.debug("Ignored message from sender '%s' (expected %s).", raw_sender, self.args.sender_node_id)
                 return
-            text = (packet.get("decoded", {}).get("text", "").strip() or packet.get("text", "").strip())
+
+            text = (packet.get("decoded", {}).get("text", "").strip() or
+                    packet.get("text", "").strip())
             if not text:
-                logger.debug("Ignored packet with no text.")
+                logger.debug("Ignored empty message.")
                 return
+
             if not text.startswith(self.args.header):
-                logger.debug(f"Ignored message not starting with '{self.args.header}': {text}")
+                logger.debug("Message does not start with expected header '%s': %s", self.args.header, text)
                 return
-            if "!" in text:
-                header_part, _ = text.split("!", 1)
-            else:
-                header_part = text
+
+            # Remove header: assume everything up to and including the first "!" is the header.
+            header_part, sep, _ = text.partition("!")
+            if not sep:
+                logger.debug("Message missing header delimiter: %s", text)
+                return
+
             match = self.header_digit_pattern.search(header_part)
             if match:
                 header_num = int(match.group())
             else:
-                logger.debug(f"Could not extract header number from '{header_part}'.")
+                logger.debug("Could not extract header number from '%s' in message: %s", header_part, text)
                 return
+
             with self.state_lock:
                 if header_num in self.received_messages:
                     self.duplicate_count += 1
-                    logger.debug(f"Duplicate message for header {header_num} ignored.")
+                    logger.debug("Duplicate message with header %d; ignoring.", header_num)
                 else:
                     self.received_messages[header_num] = text
-                    logger.info(f"Stored message with header {header_num}.")
                     if header_num > self.highest_header:
                         self.highest_header = header_num
-                        logger.info(f"Updated highest header to {self.highest_header}.")
+                        logger.info("Updated highest header to %d.", self.highest_header)
                     self.last_message_time = time.time()
         except Exception as e:
-            logger.error(f"Exception in onReceive: {e}")
+            logger.error("Exception in on_receive: %s", e)
 
-    def combine_messages(self):
+    def connect_meshtastic(self):
+        """
+        Uses the shared connection manager to open a connection and register the on_receive callback.
+        """
+        conn_mgr = MeshtasticConnectionManager(tcp_host=self.args.tcp_host, connection=self.args.connection)
+        self.iface = conn_mgr.open_connection(on_receive_callback=self.on_receive)
+        return self.iface
+
+    def combine_messages(self) -> None:
+        """
+        Combines the stored messages into a single payload string.
+        Assumes that header and payload are separated by the first "!".
+        """
         with self.state_lock:
             sorted_items = sorted(self.received_messages.items())
-            self.combined_messages = []
-            for _, msg in sorted_items:
-                if "!" in msg:
-                    payload = msg.split("!", 1)[1]
-                    self.combined_messages.append(payload)
-                else:
-                    self.combined_messages.append(msg)
+            # Remove header portion from each message.
+            self.combined_messages = [
+                msg.split("!", 1)[1] if "!" in msg else msg for _, msg in sorted_items
+            ]
 
-    def decode_and_save_image(self):
-        logger.info("Decoding Base64 and decompressing Gzip...")
+    def decode_and_save_image(self) -> None:
+        """
+        Decodes the concatenated Base64 data and decompresses the gzip data.
+        Saves the resulting image to the output file.
+        """
+        logger.info("Decoding Base64 data and decompressing...")
         combined_data = "".join(self.combined_messages)
         try:
-            padded = combined_data.ljust((len(combined_data)+3)//4*4, "=")
+            padded = combined_data.ljust(((len(combined_data) + 3) // 4) * 4, "=")
             decoded = base64.b64decode(padded)
             decompressed = gzip.decompress(decoded)
             with open(self.args.output, "wb") as f:
                 f.write(decompressed)
-            logger.info(f"Image saved to {self.args.output}")
+            logger.info("Image saved to %s", self.args.output)
         except Exception as e:
-            logger.error(f"Error during decode/decompression: {e}")
+            logger.error("Error during decoding/decompression: %s", e)
             sys.exit(1)
 
-    def upload_image(self):
+    def upload_image(self) -> None:
+        """
+        Uploads the processed output file to a remote destination using rsync with lowered CPU priority.
+        Retries up to three times.
+        """
         remote_path = f"{self.args.remote_target.rstrip('/')}/{time.strftime('%Y%m%d%H%M%S')}-restored.jpg"
         cmd = ["nice", "-n", "10", "rsync", "-vz", "-e", f"ssh -i {self.args.ssh_key}", self.args.output, remote_path]
         for attempt in range(1, 4):
             try:
                 subprocess.check_call(cmd)
-                logger.info(f"Image uploaded to {remote_path}")
+                logger.info("Image uploaded to %s", remote_path)
                 return
             except subprocess.CalledProcessError as e:
-                logger.error(f"Attempt {attempt}: Upload error: {e}")
+                logger.error("Upload attempt %d failed: %s", attempt, e)
                 time.sleep(3)
-        logger.error("Upload failed after 3 attempts.")
+        logger.error("Image upload failed after 3 attempts.")
         sys.exit(1)
 
-    async def run(self):
+    async def run(self) -> None:
+        """
+        Main asynchronous loop that collects messages until the run_time expires or an inactivity timeout occurs.
+        Then processes and optionally uploads the received data.
+        """
         self.connect_meshtastic()
         end_time = self.start_time + self.args.run_time * 60
-        logger.info("Starting main processing loop...")
+        logger.info("Receiver mode: entering main collection loop...")
         while self.running and time.time() < end_time:
             now = time.time()
             if now - self.last_message_time > self.args.inactivity_timeout:
-                logger.info("Inactivity timeout reached.")
+                logger.info("Inactivity timeout reached; stopping collection.")
                 self.running = False
                 break
             if now - self.last_progress_time >= self.args.poll_interval:
                 with self.state_lock:
                     total_msgs = len(self.received_messages)
-                    highest = self.highest_header
+                    current_highest = self.highest_header
                 remaining = end_time - now
-                logger.info(f"Progress: {total_msgs} messages, highest header: {highest}, {remaining:.1f} sec remaining.")
+                logger.info("Progress: %d messages, highest header %d, time remaining: %.1f sec",
+                            total_msgs, current_highest, remaining)
                 self.last_progress_time = now
             await asyncio.sleep(0.5)
+
+        # Close the connection gracefully.
         if self.iface:
             try:
                 self.iface.close()
             except Exception as e:
-                logger.debug(f"Error closing interface: {e}")
+                logger.debug("Error closing interface: %s", e)
+
+        # Process the collected messages.
         self.combine_messages()
         if self.args.process_image:
             self.decode_and_save_image()
         else:
-            logger.info("Skipping image processing (flag not set).")
+            logger.info("Skipping image processing (--process_image flag not set).")
         if self.args.upload:
             self.upload_image()
         else:
-            logger.info("Skipping file upload (flag not set).")
+            logger.info("Skipping file upload (--upload flag not set).")
+
         total_runtime = time.time() - self.start_time
         with self.state_lock:
             total_msgs = len(self.received_messages)
-        missing = self.highest_header - total_msgs if self.highest_header > total_msgs else 0
-        if self.args.process_image and os.path.exists(self.args.output):
-            fsize = os.path.getsize(self.args.output)
-        else:
-            fsize = "N/A"
-        self.print_table("Performance Summary", [
-            ("Total Runtime (sec)", f"{total_runtime:.2f}"),
-            ("Total Unique Messages", total_msgs),
-            ("Highest Header", self.highest_header),
-            ("Duplicate Messages", self.duplicate_count),
-            ("Estimated Missing Msgs", missing),
-            ("Transferred File Size (bytes)", fsize)
-        ])
+        missing_msgs = self.highest_header - total_msgs if self.highest_header > total_msgs else 0
+        file_size = os.path.getsize(self.args.output) if self.args.process_image and os.path.exists(self.args.output) else "N/A"
+        self.print_performance_summary(total_runtime, total_msgs, missing_msgs, file_size)
 
-    def connect_meshtastic(self):
-        logger.info("Connecting to Meshtastic receiver...")
-        try:
-            if self.args.connection == "tcp":
-                from meshtastic.tcp_interface import TCPInterface
-                self.iface = TCPInterface(hostname=self.args.tcp_host)
-                from pubsub import pub
-                pub.subscribe(self.onReceive, "meshtastic.receive")
-                logger.info(f"Connected via TCP on {self.args.tcp_host}")
-            else:
-                from meshtastic import serial_interface
-                self.iface = serial_interface.SerialInterface()
-                self.iface.onReceive = self.onReceive
-                logger.info("Connected via Serial.")
-        except Exception as e:
-            logger.error(f"Connection error: {e}")
-            sys.exit(1)
+def setup_receiver_signal_handlers(receiver: MeshtasticReceiver) -> None:
+    setup_signal_handlers(receiver)
 
-def setup_receiver_signal_handlers(processor: MeshProcessor):
-    def handler(sig, frame):
-        logger.info("CTRL+C detected in receiver. Initiating shutdown...")
-        processor.running = False
-    signal.signal(signal.SIGINT, handler)
-    signal.signal(signal.SIGTERM, handler)
-
-# ======================================================
-#                MeshBot Class (Bot)
-# ======================================================
-
-class MeshBot:
-    def __init__(self, args):
-        self.args = args
-        self.interface = None
-        self.start_time = time.time()
-        self.COMMANDS = {"status": "./check_status.sh"}
-
-    def get_status_info(self):
-        uptime = int(time.time() - self.start_time)
-        hours = uptime // 3600
-        minutes = (uptime % 3600) // 60
-        seconds = uptime % 60
-        uname = platform.uname()
-        try:
-            loadavg = os.getloadavg()
-            load_str = f"{loadavg[0]:.2f}, {loadavg[1]:.2f}, {loadavg[2]:.2f}"
-        except Exception:
-            load_str = "N/A"
-        node_id = self.args.node_id if self.args.node_id else "Unknown"
-        return (
-            f"Meshtastic Node Status:\n"
-            f"  Node ID: {node_id}\n"
-            f"  Firmware: Simulated Firmware v1.0\n"
-            f"  Platform: {uname.system} {uname.release}\n"
-            f"  Uptime: {hours}h {minutes}m {seconds}s\n"
-            f"  Load: {load_str}"
-        )
-
-    def on_receive(self, packet, interface=None):
-        try:
-            sender = packet.get("fromId", "")
-            if self.args.node_id and sender.lstrip("!") != self.args.node_id:
-                logger.info("Ignoring message from node %s (expected %s).", sender, self.args.node_id)
-                return
-            if self.args.channel_index is not None:
-                pkt_ch = packet.get("channel") or packet.get("ch_index")
-                if pkt_ch is not None and int(pkt_ch) != self.args.channel_index:
-                    logger.info("Ignoring message from channel %s (expected %s).", pkt_ch, self.args.channel_index)
-                    return
-            text = ""
-            if "decoded" in packet:
-                text = packet["decoded"].get("text", "")
-            else:
-                text = packet.get("text", "")
-            text = text.strip().lower()
-            if not text:
-                logger.debug("No text in message from node %s.", sender)
-                return
-            logger.info("Received message from node %s: %s", sender, text)
-            if text == "hi!":
-                if self.interface:
-                    self.interface.sendText("well hai!")
-                return
-            if text == "cpu!":
-                if self.interface:
-                    self.interface.sendText(get_system_info())
-                return
-            if text == "status!":
-                if self.interface:
-                    for line in self.get_status_info().splitlines():
-                        self.interface.sendText(line)
-                        time.sleep(0.5)
-                return
-            if text == "sysinfo!":
-                if self.interface:
-                    for line in get_general_sysinfo().splitlines():
-                        self.interface.sendText(line)
-                        time.sleep(0.5)
-                return
-            if text == "df!":
-                if self.interface:
-                    self.interface.sendText(get_disk_info())
-                return
-            if text == "temp!":
-                if self.interface:
-                    self.interface.sendText(get_cpu_temp())
-                return
-            if text == "ip!":
-                if self.interface:
-                    self.interface.sendText(get_ip_address())
-                return
-            if text == "mem!":
-                if self.interface:
-                    self.interface.sendText(get_mem_info())
-                return
-            if text == "joke!":
-                if self.interface:
-                    self.interface.sendText(get_random_joke())
-                return
-            if text == "help!":
-                if self.interface:
-                    for line in get_help_text().splitlines():
-                        self.interface.sendText(line)
-                        time.sleep(0.5)
-                return
-            if text == "ping!":
-                if self.interface:
-                    self.interface.sendText("pong!")
-                return
-            if text == "time!":
-                if self.interface:
-                    self.interface.sendText(get_current_time())
-                return
-            if text == "fortune!":
-                if self.interface:
-                    self.interface.sendText(get_random_fortune())
-                return
-            if text == "dmesg!":
-                if self.interface:
-                    self.interface.sendText(get_dmesg_info())
-                return
-            if text == "signal!":
-                if self.interface:
-                    for line in get_signal_info(self.interface).splitlines():
-                        self.interface.sendText(line)
-                        time.sleep(0.5)
-                return
-            if text.startswith("sendimage!"):
-                qs = text[len("sendimage!"):].strip()
-                if "=" not in qs:
-                    qs = f"header={qs}"
-                params = parse_qs(qs)
-                cmd_args = build_sender_command(params)
-                cmd = ["python3", "meshtastic_sender.py"] + cmd_args
-                logger.info("Received 'sendimage!' command. Running: %s", " ".join(cmd))
-                if self.interface:
-                    try:
-                        self.interface.close()
-                        logger.info("Closed interface for sendimage!")
-                    except Exception as e:
-                        logger.error("Error closing interface: %s", e)
-                    self.interface = None
-                time.sleep(5)
-                try:
-                    result = subprocess.run(cmd, shell=False, check=True,
-                                              stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                              universal_newlines=True)
-                    logger.info("meshtastic_sender.py output: %s", result.stdout)
-                except subprocess.CalledProcessError as e:
-                    logger.error("Error executing sendimage! command: %s", e)
-                return
-            if text.startswith("simple!"):
-                simple_msg = text[len("simple!"):].strip()
-                if self.interface:
-                    self.interface.sendText(simple_msg)
-                return
-            for key, script in self.COMMANDS.items():
-                if text.startswith(key):
-                    if self.interface:
-                        try:
-                            self.interface.close()
-                            logger.info("Closed interface before executing %s", script)
-                        except Exception as e:
-                            logger.error("Error closing interface: %s", e)
-                        self.interface = None
-                    time.sleep(5)
-                    try:
-                        result = subprocess.run(script, shell=True, check=True,
-                                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                                  universal_newlines=True)
-                        logger.info("Script output: %s", result.stdout)
-                    except subprocess.CalledProcessError as e:
-                        logger.error("Error executing script %s: %s", script, e)
-                    return
-            logger.info("No matching command for message: %s", text)
-        except Exception as ex:
-            logger.error("Exception in on_receive: %s", ex)
-
-    def connect(self):
-        try:
-            logger.info("Establishing persistent TCP connection to %s...", self.args.tcp_host)
-            self.interface = TCPInterface(hostname=self.args.tcp_host)
-            pub.subscribe(self.on_receive, "meshtastic.receive")
-            logger.info("Connected via TCP to %s.", self.args.tcp_host)
-        except Exception as e:
-            logger.error("Error establishing TCP connection: %s", e)
-            sys.exit(1)
-
-    def run(self):
-        self.connect()
-        if self.args.channel_index is not None:
-            logger.info("Listening for messages on channel %s...", self.args.channel_index)
-        else:
-            logger.info("Listening for messages on all channels...")
-        try:
-            while True:
-                if self.interface is None:
-                    logger.info("Interface closed; reconnecting...")
-                    self.connect()
-                time.sleep(1)
-        except KeyboardInterrupt:
-            logger.info("KeyboardInterrupt detected. Shutting down MeshBot...")
-        finally:
-            if self.interface:
-                try:
-                    self.interface.close()
-                    logger.info("Closed Meshtastic interface.")
-                except Exception as e:
-                    logger.error("Error closing interface: %s", e)
-
-# ======================================================
-#                Main Entry Point (Receiver)
-# ======================================================
-
-def receiver_main():
-    parser = argparse.ArgumentParser(
-        description="Meshtastic Receiver with Asynchronous Processing"
-    )
-    parser.add_argument("--run_time", type=int, required=True, help="Run time in minutes.")
-    parser.add_argument("--sender_node_id", required=True, help="Sender node ID to filter messages from.")
-    parser.add_argument("--header", type=str, default="pn", help="Expected message header prefix (before '!').")
-    parser.add_argument("--output", type=str, default="restored.jpg", help="Output image file.")
-    parser.add_argument("--remote_target", type=str, required=True, help="Remote path for image upload.")
-    parser.add_argument("--ssh_key", type=str, required=True, help="SSH identity file for rsync.")
-    parser.add_argument("--poll_interval", type=int, default=10, help="Poll interval in seconds.")
-    parser.add_argument("--inactivity_timeout", type=int, default=60, help="Inactivity timeout in seconds.")
-    parser.add_argument("--connection", type=str, choices=["tcp", "serial"], required=True, help="Connection mode.")
-    parser.add_argument("--tcp_host", type=str, default="localhost", help="TCP host (default: localhost).")
-    parser.add_argument("--debug", action="store_true", help="Enable debug mode.")
-    parser.add_argument("--process_image", action="store_true", help="Process Base64 data as an image.")
-    parser.add_argument("--upload", action="store_true", help="Attempt file upload using rsync.")
-    args = parser.parse_args()
-    configure_logging(args.debug)
-    processor = MeshProcessor(args)
-    processor.print_table("Startup Summary", [
-        ("run_time (min)", args.run_time),
-        ("sender_node_id", args.sender_node_id),
-        ("header", args.header),
-        ("output", args.output),
-        ("remote_target", args.remote_target),
-        ("ssh_key", args.ssh_key),
-        ("poll_interval (sec)", args.poll_interval),
-        ("inactivity_timeout (sec)", args.inactivity_timeout),
-        ("connection", args.connection),
-        ("tcp_host", args.tcp_host),
-        ("process_image", args.process_image),
-        ("upload", args.upload),
-        ("debug", args.debug),
-    ])
-    setup_receiver_signal_handlers(processor)
+def run_receiver_mode(args) -> None:
+    receiver = MeshtasticReceiver(args)
+    receiver.print_startup_summary()
+    setup_receiver_signal_handlers(receiver)
     try:
-        asyncio.run(processor.run())
+        asyncio.run(receiver.run())
     except Exception as e:
-        logger.error(f"Fatal error in receiver: {e}")
+        logger.error("Fatal error in receiver mode: %s", e)
         sys.exit(1)
-
-# ======================================================
-#                Main Entry Point (Bot)
-# ======================================================
-
-def bot_main():
+# ---------------------------------------------------------------------------
+# MAIN ENTRY POINT
+# ---------------------------------------------------------------------------
+def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Meshtastic Bot with TCP Interaction and Filtering"
+        description="Meshbot Unified – Run in bot, sender, or receiver mode."
     )
-    parser.add_argument("--tcp_host", type=str, default="localhost", help="TCP host (default: localhost)")
-    parser.add_argument("--channel_index", type=int, default=0, help="Channel index filter (default: 0; use -1 to disable).")
-    parser.add_argument("--node_id", type=str, default=None, help="Sender node ID filter (default: None).")
-    args = parser.parse_args()
-    if args.channel_index == -1:
-        args.channel_index = None
-    bot = MeshBot(args)
-    bot.run()
+    subparsers = parser.add_subparsers(dest="mode", required=True, help="Operating mode")
 
-# ======================================================
-#                Main Entry Point (Sender)
-# ======================================================
+    # ----- Bot Mode Parser -----
+    bot_parser = subparsers.add_parser("bot", help="Run Bot mode")
+    bot_parser.add_argument("--tcp_host", type=str, default="localhost", help="TCP host (default: localhost)")
+    bot_parser.add_argument("--channel_index", type=int, default=0, help="Channel index for filtering (use -1 to disable)")
+    bot_parser.add_argument("--node_id", type=str, default=None, help="Sender node ID to filter messages")
+    bot_parser.add_argument("--debug", action="store_true", help="Enable debug mode for detailed logging")
 
-def sender_main():
-    parser = argparse.ArgumentParser(
-        description="Meshtastic Sender: Process image and/or send file content via a persistent Meshtastic connection."
-    )
-    parser.add_argument("--mode", choices=["send", "process", "all"], default="all",
-                        help="Mode to run: 'process' for image processing only, 'send' for sending only, 'all' for both (default: all)")
-    parser.add_argument("--simple", action="store_true", help="Send a simple message (overrides other sender parameters).")
-    parser.add_argument("--message", type=str, default="Hello!", help="Message text for simple mode.")
-    parser.add_argument("--run_time", type=int, default=5, help="Run time in minutes (for sending mode).")
-    parser.add_argument("--sender_node_id", required=True, help="Sender node ID")
-    parser.add_argument("--header", type=str, default="pn", help="Header template (use '#' for digit placeholders)")
-    parser.add_argument("--quality", type=int, default=75, help="JPEG quality for optimization")
-    parser.add_argument("--resize", type=str, default="800x600", help="Resize dimensions (e.g., 800x600)")
-    parser.add_argument("--output", type=str, default="base64_image.gz", help="Output file for image processing")
-    parser.add_argument("--file_path", type=str, help="Path to file to send (default: output file)")
-    parser.add_argument("--chunk_size", type=int, default=200, help="Chunk size for sending")
-    parser.add_argument("--ch_index", type=int, default=1, help="Starting chunk index (default: 1)")
-    parser.add_argument("--dest", type=str, default="!47a78d36", help="Destination token for sending")
-    parser.add_argument("--connection", type=str, choices=["tcp", "serial"], default="tcp", help="Connection type (default: tcp)")
-    parser.add_argument("--tcp_host", type=str, default="localhost", help="TCP host (default: localhost)")
-    parser.add_argument("--ack", action="store_true", help="Enable ACK mode")
-    parser.add_argument("--sleep_delay", type=float, default=1.0, help="Delay between sending chunks (default: 1.0 sec)")
-    parser.add_argument("--max_retries", type=int, default=10, help="Maximum retries per chunk (default: 10)")
-    parser.add_argument("--retry_delay", type=int, default=1, help="Delay between retries (default: 1 sec)")
-    parser.add_argument("--upload", action="store_true", help="Upload processed image using rsync (requires --remote_target and --ssh_key)")
-    parser.add_argument("--remote_target", type=str, help="Remote target for upload")
-    parser.add_argument("--ssh_key", type=str, help="SSH key for rsync")
-    parser.add_argument("--debug", action="store_true", help="Enable debug logging")
+    # ----- Sender Mode Parser -----
+    sender_parser = subparsers.add_parser("sender", help="Run Sender mode")
+    sender_parser.add_argument("--mode", choices=["send", "process", "all"], default="all",
+                               help="Mode to run: 'process' to only process an image, 'send' to send file content, or 'all'")
+    sender_parser.add_argument("--sender_node_id", required=True, help="Sender node ID (for reference)")
+    sender_parser.add_argument("--header", type=str, default="pn", help="Header template (use '#' for digit placeholders)")
+    # Image processing parameters.
+    sender_parser.add_argument("--quality", type=int, default=75, help="JPEG quality factor for optimization")
+    sender_parser.add_argument("--resize", type=str, default="800x600", help="Resize dimensions (e.g., 800x600)")
+    sender_parser.add_argument("--output", type=str, default="base64_image.gz", help="Output file for image processing")
+    # Upload parameters.
+    sender_parser.add_argument("--remote_target", type=str, help="Remote path for file upload (if --upload is set)")
+    sender_parser.add_argument("--ssh_key", type=str, help="SSH identity file for rsync (if --upload is set)")
+    sender_parser.add_argument("--poll_interval", type=int, default=10, help="Poll interval in seconds")
+    sender_parser.add_argument("--inactivity_timeout", type=int, default=60, help="Inactivity timeout in seconds")
+    sender_parser.add_argument("--connection", type=str, choices=["tcp", "serial"], default="tcp", help="Connection mode")
+    sender_parser.add_argument("--tcp_host", type=str, default="localhost", help="TCP host (default: localhost)")
+    sender_parser.add_argument("--process_image", action="store_true", help="Run the image processing pipeline")
+    sender_parser.add_argument("--upload", action="store_true", help="Upload the processed image file using rsync")
+    # Sending pipeline parameters.
+    sender_parser.add_argument("--file_path", type=str, help="Path to text file to send (if not provided, defaults to output file)")
+    sender_parser.add_argument("--chunk_size", type=int, default=200, help="Maximum length of each chunk")
+    sender_parser.add_argument("--ch_index", type=int, default=1, help="Starting chunk index (default: 1)")
+    sender_parser.add_argument("--dest", type=str, default="!47a78d36", help="Destination token for Meshtastic send")
+    sender_parser.add_argument("--ack", action="store_true", help="Enable ACK mode for sending")
+    sender_parser.add_argument("--max_retries", type=int, default=DEFAULT_MAX_RETRIES, help="Maximum retries per chunk")
+    sender_parser.add_argument("--retry_delay", type=int, default=DEFAULT_RETRY_DELAY, help="Delay (s) between retries")
+    sender_parser.add_argument("--sleep_delay", type=float, default=DEFAULT_SLEEP_DELAY, help="Sleep delay (s) between chunks")
+    sender_parser.add_argument("--debug", action="store_true", help="Enable debug mode for detailed logging")
+
+    # ----- Receiver Mode Parser -----
+    receiver_parser = subparsers.add_parser("receiver", help="Run Receiver mode")
+    receiver_parser.add_argument("--run_time", type=int, required=True, help="Run time (in minutes)")
+    receiver_parser.add_argument("--sender_node_id", required=True, help="Sender node ID to filter messages")
+    receiver_parser.add_argument("--header", type=str, default="pn", help="Expected message header prefix")
+    receiver_parser.add_argument("--output", type=str, default="restored.jpg", help="Output image file")
+    receiver_parser.add_argument("--remote_target", type=str, required=True, help="Remote path for image upload")
+    receiver_parser.add_argument("--ssh_key", type=str, required=True, help="SSH identity file for rsync")
+    receiver_parser.add_argument("--poll_interval", type=int, default=10, help="Poll interval in seconds")
+    receiver_parser.add_argument("--inactivity_timeout", type=int, default=60, help="Inactivity timeout in seconds")
+    receiver_parser.add_argument("--connection", type=str, choices=["tcp", "serial"], required=True, help="Connection mode")
+    receiver_parser.add_argument("--tcp_host", type=str, default="localhost", help="TCP host (default: localhost)")
+    receiver_parser.add_argument("--debug", action="store_true", help="Enable debug mode for detailed logging")
+    receiver_parser.add_argument("--process_image", action="store_true", help="Process Base64 data as an image")
+    receiver_parser.add_argument("--upload", action="store_true", help="Upload the processed image file using rsync")
+
     args = parser.parse_args()
     configure_logging(args.debug)
-    # If in simple mode, send the simple message and exit.
-    if args.simple:
-        result = MeshSender.send_simple_message(args.message)
-        print(result)
-        sys.exit(0)
-    # For file sending modes, default file_path to output if not provided.
-    if args.mode in ("send", "all") and not args.file_path:
-        args.file_path = args.output
-    print_table("Sender Parameters", [
-        ("Mode", args.mode),
-        ("Sender Node ID", args.sender_node_id),
-        ("Header", args.header),
-        ("Quality", args.quality),
-        ("Resize", args.resize),
-        ("Output", args.output),
-        ("File Path", args.file_path),
-        ("Chunk Size", args.chunk_size),
-        ("Destination", args.dest),
-        ("Connection", args.connection),
-        ("ACK Mode", args.ack),
-        ("Max Retries", args.max_retries),
-        ("Retry Delay", args.retry_delay),
-        ("Sleep Delay", args.sleep_delay),
-        ("Upload", args.upload),
-        ("Remote Target", args.remote_target if args.remote_target else "N/A"),
-        ("SSH Key", args.ssh_key if args.ssh_key else "N/A")
-    ])
-    mode = args.mode
-    if mode == "process":
-        print("Running image processing pipeline...")
-        summary = optimize_compress_zip_base64encode_jpg(
-            quality=args.quality,
-            resize=args.resize,
-            snapshot_url="http://localhost:8080/0/action/snapshot",
-            output_file=args.output
-        )
-        print("Image processing complete. Summary:")
-        for k, v in summary.items():
-            print(f"{k}: {v}")
-        if args.upload:
-            print("Uploading processed image file...")
-            upload_file(args.output, args.remote_target, args.ssh_key)
-    elif mode == "send":
-        file_path = Path(args.file_path)
-        sender = MeshSender(args)
-        setup_sender_signal_handlers(sender)
-        start_time = time.time()
-        sender.open_connection()
-        total_chunks, total_failures = sender.send_all_chunks()
-        sender.close_connection()
-        end_time = time.time()
-        elapsed = end_time - start_time
-        fsize = sender.get_file_size()
-        formatted_time = time.strftime("%H:%M:%S", time.gmtime(elapsed))
-        total_attempts = total_chunks + total_failures
-        speed = fsize / elapsed if elapsed > 0 else fsize
-        print_table("Execution Summary", [
-            ("Start Time", time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(start_time))),
-            ("End Time", time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(end_time))),
-            ("Time Elapsed", formatted_time),
-            ("Total Chunks Sent", total_chunks),
-            ("Total Attempts", f"{total_attempts} (includes {total_failures} retries)"),
-            ("File Size", f"{fsize} bytes"),
-            ("Transmission Speed", f"{speed:.2f} bytes/sec")
-        ])
-    elif mode == "all":
-        print("Running image processing pipeline...")
-        summary = optimize_compress_zip_base64encode_jpg(
-            quality=args.quality,
-            resize=args.resize,
-            snapshot_url="http://localhost:8080/0/action/snapshot",
-            output_file=args.output
-        )
-        print("Image processing complete. Summary:")
-        for k, v in summary.items():
-            print(f"{k}: {v}")
-        if args.upload:
-            print("Uploading processed image file...")
-            upload_file(args.output, args.remote_target, args.ssh_key)
-        # Default file_path to output if not supplied.
-        if not args.file_path:
-            args.file_path = args.output
-        sender = MeshSender(args)
-        setup_sender_signal_handlers(sender)
-        start_time = time.time()
-        sender.open_connection()
-        total_chunks, total_failures = sender.send_all_chunks()
-        sender.close_connection()
-        end_time = time.time()
-        elapsed = end_time - start_time
-        fsize = sender.get_file_size()
-        formatted_time = time.strftime("%H:%M:%S", time.gmtime(elapsed))
-        total_attempts = total_chunks + total_failures
-        speed = fsize / elapsed if elapsed > 0 else fsize
-        print_table("Execution Summary", [
-            ("Start Time", time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(start_time))),
-            ("End Time", time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(end_time))),
-            ("Time Elapsed", formatted_time),
-            ("Total Chunks Sent", total_chunks),
-            ("Total Attempts", f"{total_attempts} (includes {total_failures} retries)"),
-            ("File Size", f"{fsize} bytes"),
-            ("Transmission Speed", f"{speed:.2f} bytes/sec")
-        ])
+
+    if args.mode == "bot":
+        run_bot_mode(args)
+    elif args.mode == "sender":
+        run_sender_mode(args)
+    elif args.mode == "receiver":
+        run_receiver_mode(args)
     else:
-        logger.error("Unknown sender mode.")
-        sys.exit(1)
-
-# ======================================================
-#                Main Entry Point
-# ======================================================
-
-def main():
-    """
-    Parses command-line arguments, configures logging, and dispatches to the appropriate service.
-    
-    --service choices:
-      bot       - Run interactive bot.
-      sender    - Run sender functionality only.
-      receiver  - Run receiver functionality only.
-      meshbot   - Run both bot and receiver concurrently.
-    """
-    parser = argparse.ArgumentParser(
-        description="MeshBot: Combined Meshtastic Bot with Sending, Receiving, and Bot Features."
-    )
-    parser.add_argument("--service", type=str, choices=["bot", "sender", "receiver", "meshbot"],
-                        required=True, help="Service mode to run.")
-    # Common options for bot and receiver:
-    parser.add_argument("--tcp_host", type=str, default="localhost", help="TCP host (default: localhost)")
-    parser.add_argument("--channel_index", type=int, default=0,
-                        help="Channel index filter (default: 0; use -1 for all channels)")
-    parser.add_argument("--node_id", type=str, default=None, help="Node ID for filtering (optional)")
-    # Options for sender and receiver:
-    parser.add_argument("--sender_node_id", type=str, default=None, help="Sender node ID filter (required for sender/receiver)")
-    parser.add_argument("--header", type=str, default="nc", help="Message header/prefix (default: nc)")
-    # Options for sender:
-    parser.add_argument("--mode", type=str, choices=["send", "process", "all"], default="all",
-                        help="Sender mode: 'send' to send file, 'process' to process image only, 'all' for both (default: all)")
-    parser.add_argument("--simple", action="store_true", help="Use simple mode to send a plain text message.")
-    parser.add_argument("--message", type=str, default="Hello!", help="Message for simple sender mode.")
-    parser.add_argument("--quality", type=int, default=75, help="JPEG quality for image processing (default: 75)")
-    parser.add_argument("--resize", type=str, default="800x600", help="Resize dimension (default: 800x600)")
-    parser.add_argument("--output", type=str, default="base64_image.gz", help="Output file for processed image")
-    parser.add_argument("--file_path", type=str, help="Path to file to send (if not provided, defaults to output file)")
-    parser.add_argument("--chunk_size", type=int, default=200, help="Chunk size (default: 200)")
-    parser.add_argument("--ch_index", type=int, default=1, help="Starting chunk index (default: 1)")
-    parser.add_argument("--dest", type=str, default="!47a78d36", help="Destination token (default: !47a78d36)")
-    parser.add_argument("--ack", action="store_true", help="Enable ACK mode for sender")
-    parser.add_argument("--sleep_delay", type=float, default=1.0, help="Sleep delay between sending chunks (default: 1.0 sec)")
-    parser.add_argument("--max_retries", type=int, default=10, help="Max retries per chunk (default: 10)")
-    parser.add_argument("--retry_delay", type=int, default=1, help="Retry delay (default: 1 sec)")
-    parser.add_argument("--upload", action="store_true", help="Enable file upload (requires --remote_target and --ssh_key)")
-    parser.add_argument("--remote_target", type=str, help="Remote target for file upload")
-    parser.add_argument("--ssh_key", type=str, help="SSH key for file upload")
-    # Options for receiver:
-    parser.add_argument("--run_time", type=int, default=5, help="Receiver run time in minutes (default: 5)")
-    parser.add_argument("--poll_interval", type=int, default=10, help="Poll interval in seconds (default: 10)")
-    parser.add_argument("--inactivity_timeout", type=int, default=60, help="Inactivity timeout in seconds (default: 60)")
-    # General debug option:
-    parser.add_argument("--debug", action="store_true", help="Enable debug mode")
-    args = parser.parse_args()
-
-    # Configure logging
-    configure_logging(args.debug)
-
-    service = args.service.lower()
-    if service == "bot":
-        bot_main()
-    elif service == "sender":
-        sender_main()
-    elif service == "receiver":
-        receiver_main()
-    elif service == "meshbot":
-        # Run bot (synchronous) and receiver (asynchronous) concurrently.
-        # Start the bot in a separate thread.
-        import threading
-        bot_thread = threading.Thread(target=bot_main, daemon=True)
-        bot_thread.start()
-        # Run the receiver in the main thread’s asyncio loop.
-        receiver_main()
-    else:
-        logger.error("Unknown service mode specified.")
+        parser.print_help()
         sys.exit(1)
 
 if __name__ == "__main__":
