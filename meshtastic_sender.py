@@ -38,6 +38,7 @@ When in “all” or “process” mode with the upload flag set, the processed 
   - `--max_retries`: Maximum number of retries per chunk (default: 10).
   - `--retry_delay`: Delay in seconds between retries (default: 1).
   - `--sleep_delay`: Sleep delay in seconds between sending chunks (default: 1.0).
+  - `--start_delay`: Delay in seconds after sending the initial message but before sending chunks (default: 0.0).
   - `--connection`: Connection mode (`tcp` or `serial`, default: `tcp`).
   - `--tcp_host`: TCP host for Meshtastic connection (default: `localhost`).
   - `--debug`: Enables debug mode for detailed logging.
@@ -240,7 +241,8 @@ class PersistentMeshtasticSender:
     def __init__(self, file_path: Path, chunk_size: int, ch_index: int, dest: str,
                  connection: str, max_retries: int = DEFAULT_MAX_RETRIES,
                  retry_delay: int = DEFAULT_RETRY_DELAY, header_template: str = None,
-                 use_ack: bool = False, sleep_delay: float = DEFAULT_SLEEP_DELAY):
+                 use_ack: bool = False, sleep_delay: float = DEFAULT_SLEEP_DELAY,
+                 start_delay: float = 0.0):
         self.file_path = file_path
         self.chunk_size = chunk_size
         self.ch_index = ch_index
@@ -251,6 +253,7 @@ class PersistentMeshtasticSender:
         self.header_template = header_template
         self.use_ack = use_ack
         self.sleep_delay = sleep_delay
+        self.start_delay = start_delay
         self.interface = None
 
     def read_file(self) -> str:
@@ -345,12 +348,38 @@ class PersistentMeshtasticSender:
                     sys.exit(1)
         return attempt
 
+    def send_initial_message(self, total_chunks: int):
+        """
+        Sends an initial message with the header "messagecount!" followed by the maximum header value.
+        """
+        if self.header_template:
+            max_header = self.generate_header(total_chunks, total_chunks)
+            initial_message = f"messagecount!{max_header}"
+        else:
+            initial_message = f"messagecount!{total_chunks}"
+
+        logger.info(f"Sending initial message: {initial_message}")
+        try:
+            self.interface.sendText(initial_message, wantAck=self.use_ack)
+        except Exception as e:
+            logger.error(f"Failed to send initial message: {e}")
+            sys.exit(1)
+
     def send_all_chunks(self):
         """Reads file content, splits it into chunks, then sequentially sends each chunk."""
         file_content = self.read_file()
         chunks = self.chunk_content(file_content)
         total_chunks = len(chunks)
         logger.info(f"Total chunks to send: {total_chunks}")
+
+        # Send the initial message with the maximum header value
+        self.send_initial_message(total_chunks)
+
+        # Sleep for the specified start delay
+        if self.start_delay > 0:
+            logger.info(f"Sleeping for {self.start_delay} seconds before sending chunks...")
+            time.sleep(self.start_delay)
+
         total_failures = 0
         for i, chunk in enumerate(chunks, start=1):
             failures = self.send_chunk(chunk, i, total_chunks)
@@ -411,6 +440,8 @@ def main():
                         help="Delay in seconds between retries")
     parser.add_argument("--sleep_delay", type=float, default=DEFAULT_SLEEP_DELAY,
                         help="Sleep delay in seconds between sending chunks")
+    parser.add_argument("--start_delay", type=float, default=0.0,
+                        help="Delay in seconds after sending the initial message but before sending chunks")
     parser.add_argument("--debug", action="store_true",
                         help="Enable debug mode for detailed logging")
     parser.add_argument("--connection", type=str, choices=["tcp", "serial"], default="tcp",
@@ -442,6 +473,7 @@ def main():
         ("Max Retries", args.max_retries),
         ("Retry Delay", args.retry_delay),
         ("Sleep Delay", args.sleep_delay),
+        ("Start Delay", args.start_delay),
         ("Upload", args.upload),
         ("Remote Target", args.remote_target if args.remote_target else "N/A"),
         ("SSH Key", args.ssh_key if args.ssh_key else "N/A")
@@ -478,7 +510,8 @@ def main():
             retry_delay=args.retry_delay,
             header_template=args.header,
             use_ack=args.ack,
-            sleep_delay=args.sleep_delay
+            sleep_delay=args.sleep_delay,
+            start_delay=args.start_delay
         )
         setup_signal_handlers(sender)
         start_time = time.time()
