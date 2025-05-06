@@ -87,7 +87,8 @@ def optimize_compress_zip_base64encode_jpg(
         quality=75,
         resize="800x600",
         snapshot_url="http://localhost:8080/0/action/snapshot",
-        output_file="base64_image.gz"):
+        output_file="base64_image.gz",
+        cleanup=False):
     """
     Captures a snapshot, optimizes/resizes the JPEG, compresses it with Zopfli gzip,
     and Base64 encodes the compressed image into output_file.
@@ -123,11 +124,14 @@ def optimize_compress_zip_base64encode_jpg(
     print(f"Copying snapshot from {source_snapshot} to {image_path} ...")
     shutil.copy2(source_snapshot, image_path)
     
-    for f in glob.glob("/var/lib/motion/*"):
-        try:
-            os.remove(f)
-        except Exception as e:
-            print(f"Warning: Could not remove {f}: {e}")
+    # Execute cleanup logic only if the cleanup flag is set
+    if cleanup:
+        print("Performing cleanup of old snapshots...")
+        for f in glob.glob("/var/lib/motion/*"):
+            try:
+                os.remove(f)
+            except Exception as e:
+                print(f"Warning: Could not remove {f}: {e}")
     
     initial_size = os.stat(image_path).st_size
     print(f"Initial file size: {initial_size} bytes")
@@ -363,6 +367,8 @@ def main():
                         help="Resize dimensions (e.g., 800x600)")
     parser.add_argument("--output", type=str, default="base64_image.gz",
                         help="Output file from image processing")
+    parser.add_argument("--cleanup", action="store_true",
+                        help="Enable cleanup of intermediate files after processing (default: off)")
     # Upload parameters (only required if --upload is set)
     parser.add_argument("--remote_target", type=str,
                         help="Remote path for file upload (required if --upload is set)")
@@ -436,7 +442,8 @@ def main():
             quality=args.quality,
             resize=args.resize,
             snapshot_url="http://localhost:8080/0/action/snapshot",
-            output_file=args.output
+            output_file=args.output,
+            cleanup=args.cleanup
         )
         print("Image processing complete. Summary:")
         for k, v in summary.items():
@@ -489,7 +496,8 @@ def main():
             quality=args.quality,
             resize=args.resize,
             snapshot_url="http://localhost:8080/0/action/snapshot",
-            output_file=args.output
+            output_file=args.output,
+            cleanup=args.cleanup
         )
         print("Image processing complete. Summary:")
         for k, v in summary.items():
