@@ -20,21 +20,43 @@ This script combines two pipelines:
 If no mode is specified, the script defaults to “all”—that is, it will run both pipelines in sequence.
 When in “all” or “process” mode with the upload flag set, the processed image file is uploaded via rsync.
 
-Usage Examples:
+### Parameters:
+  - `--mode`: Specifies the mode of operation (`process`, `send`, or `all`).
+  - `--header`: Template for prepending headers to chunks (use `#` as digit placeholders).
+  - `--quality`: JPEG quality factor for optimization (default: 75).
+  - `--resize`: Resize dimensions for the image (e.g., `800x600`).
+  - `--output`: Output file for the processed image (default: `base64_image.gz`).
+  - `--cleanup`: Enables cleanup of intermediate files after processing.
+  - `--remote_target`: Remote path for file upload (required if `--upload` is set).
+  - `--ssh_key`: SSH identity file for rsync (required if `--upload` is set).
+  - `--upload`: Enables uploading of the processed image file using rsync.
+  - `--file_path`: Path to the file to send (defaults to the output file if not provided).
+  - `--chunk_size`: Maximum length of each chunk when sending (default: 200).
+  - `--ch_index`: Starting chunk index (default: 1).
+  - `--dest`: Destination token for Meshtastic send (default: `!47a78d36`).
+  - `--ack`: Enables acknowledgment mode for sending.
+  - `--max_retries`: Maximum number of retries per chunk (default: 10).
+  - `--retry_delay`: Delay in seconds between retries (default: 1).
+  - `--sleep_delay`: Sleep delay in seconds between sending chunks (default: 1.0).
+  - `--connection`: Connection mode (`tcp` or `serial`, default: `tcp`).
+  - `--tcp_host`: TCP host for Meshtastic connection (default: `localhost`).
+  - `--debug`: Enables debug mode for detailed logging.
+
+### Updated Usage Examples:
   --- To process an image and then upload and send it ---
-  python3 meshtastic_sender.py --mode all --sender_node_id eb314389 --header nc --process_image --upload \
+  python3 meshtastic_sender.py --mode all --header nc --upload \
     --quality 75 --resize 800x600 --remote_target "user@host:/remote/path" --ssh_key "/path/to/id_rsa" \
-    --chunk_size 180 --dest '!47a78d36' --connection tcp --ack --sleep_delay 1
+    --chunk_size 180 --dest '!47a78d36' --connection tcp --tcp_host 192.168.1.100 --ack --sleep_delay 1
 
   --- To run only the image processing pipeline and optionally upload ---
-  python3 meshtastic_sender.py --mode process --sender_node_id eb314389 --quality 75 --resize 800x600 \
+  python3 meshtastic_sender.py --mode process --quality 75 --resize 800x600 \
     --upload --remote_target "user@host:/remote/path" --ssh_key "/path/to/id_rsa"
 
   --- To send an already-processed file ---
-  python3 meshtastic_sender.py --mode send --sender_node_id eb314389 --file_path base64_image.gz \
-    --chunk_size 180 --dest '!47a78d36' --connection tcp --ack --sleep_delay 1
+  python3 meshtastic_sender.py --mode send --file_path base64_image.gz \
+    --chunk_size 180 --dest '!47a78d36' --connection serial --ack --sleep_delay 1
 
-Use --help for full details on all parameters.
+Use `--help` for full details on all parameters.
 """
 
 import argparse
@@ -428,16 +450,6 @@ def main():
 
     if args.mode == "process":
         print("Running image processing pipeline...")
-        ("Retry Delay", args.retry_delay),
-        ("Sleep Delay", args.sleep_delay),
-        ("Upload", args.upload),
-        ("Remote Target", args.remote_target if args.remote_target else "N/A"),
-        ("SSH Key", args.ssh_key if args.ssh_key else "N/A")
-    ]
-    print_table("Sender Parameters", param_items)
-
-    if args.mode == "process":
-        print("Running image processing pipeline...")
         summary = optimize_compress_zip_base64encode_jpg(
             quality=args.quality,
             resize=args.resize,
@@ -470,7 +482,7 @@ def main():
         )
         setup_signal_handlers(sender)
         start_time = time.time()
-        sender.open_connection()
+        sender.open_connection(tcp_host=args.tcp_host)  # Pass tcp_host to open_connection
         total_chunks, total_failures = sender.send_all_chunks()
         sender.close_connection()
         end_time = time.time()
@@ -523,7 +535,7 @@ def main():
         )
         setup_signal_handlers(sender)
         start_time = time.time()
-        sender.open_connection()
+        sender.open_connection(tcp_host=args.tcp_host)  # Pass tcp_host to open_connection
         total_chunks, total_failures = sender.send_all_chunks()
         sender.close_connection()
         end_time = time.time()
