@@ -264,12 +264,12 @@ class PersistentMeshtasticSender:
             header = f"{self.header_template}{index:0{width}d}!"
             return header
 
-    def open_connection(self):
+    def open_connection(self, tcp_host="localhost"):
         """Establishes a persistent Meshtastic connection (TCP or Serial)."""
         if self.connection == 'tcp':
             logger.info("Establishing persistent TCP connection...")
             try:
-                self.interface = TCPInterface(hostname="localhost")
+                self.interface = TCPInterface(hostname=tcp_host)
             except Exception as e:
                 logger.error(f"Error establishing TCP connection: {e}")
                 sys.exit(1)
@@ -354,10 +354,6 @@ def main():
                         default="all",
                         help="Mode to run: 'process' to process an image, 'send' to send file content, "
                              "'all' to run both (default: all)")
-    parser.add_argument("--run_time", type=int, default=5,
-                        help="Run time in minutes for collecting/sending (used in send mode)")
-    parser.add_argument("--sender_node_id", required=True,
-                        help="Sender node ID to filter messages from")
     parser.add_argument("--header", type=str, default="pn",
                         help="Header template (use '#' as digit placeholders)")
     # Parameters for image processing:
@@ -374,16 +370,6 @@ def main():
                         help="Remote path for file upload (required if --upload is set)")
     parser.add_argument("--ssh_key", type=str,
                         help="SSH identity file for rsync (required if --upload is set)")
-    parser.add_argument("--poll_interval", type=int, default=10,
-                        help="Poll interval in seconds for sending progress")
-    parser.add_argument("--inactivity_timeout", type=int, default=60,
-                        help="Inactivity timeout in seconds")
-    parser.add_argument("--connection", type=str, choices=["tcp", "serial"], default="tcp",
-                        help="Connection mode: 'tcp' or 'serial'")
-    parser.add_argument("--tcp_host", type=str, default="localhost",
-                        help="TCP host (default: localhost)")
-    parser.add_argument("--process_image", action="store_true",
-                        help="Run the image processing pipeline (optimization, resize, compress, Base64 encode)")
     parser.add_argument("--upload", action="store_true",
                         help="Upload the processed image file using rsync (requires --remote_target and --ssh_key)")
     # Parameters for sending pipeline:
@@ -405,6 +391,10 @@ def main():
                         help="Sleep delay in seconds between sending chunks")
     parser.add_argument("--debug", action="store_true",
                         help="Enable debug mode for detailed logging")
+    parser.add_argument("--connection", type=str, choices=["tcp", "serial"], default="tcp",
+                        help="Connection mode: 'tcp' or 'serial'")
+    parser.add_argument("--tcp_host", type=str, default="localhost",
+                        help="TCP host (default: localhost, used only in TCP mode)")
     args = parser.parse_args()
 
     # If upload is enabled, check that remote_target and ssh_key are provided.
@@ -417,7 +407,6 @@ def main():
     # --------- Display Sender Parameters in an ASCII Table ---------
     param_items = [
         ("Mode", args.mode),
-        ("Sender Node ID", args.sender_node_id),
         ("Header", args.header),
         ("Quality", args.quality),
         ("Resize", args.resize),
@@ -426,8 +415,19 @@ def main():
         ("Chunk Size", args.chunk_size),
         ("Destination", args.dest),
         ("Connection", args.connection),
+        ("TCP Host", args.tcp_host if args.connection == "tcp" else "N/A"),
         ("ACK Mode", args.ack),
         ("Max Retries", args.max_retries),
+        ("Retry Delay", args.retry_delay),
+        ("Sleep Delay", args.sleep_delay),
+        ("Upload", args.upload),
+        ("Remote Target", args.remote_target if args.remote_target else "N/A"),
+        ("SSH Key", args.ssh_key if args.ssh_key else "N/A")
+    ]
+    print_table("Sender Parameters", param_items)
+
+    if args.mode == "process":
+        print("Running image processing pipeline...")
         ("Retry Delay", args.retry_delay),
         ("Sleep Delay", args.sleep_delay),
         ("Upload", args.upload),
