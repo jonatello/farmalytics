@@ -3,7 +3,7 @@
 Meshtastic Sender
 
 This script provides a flexible and robust pipeline for sending data over a Meshtastic mesh network. 
-It supports three primary modes of operation: image processing and transfer, file transfer, and simple message sending.
+It supports three primary modes of operation: image processing and transfer, and file transfer.
 
 ### Purpose:
 1. **Image Processing and Transfer**:
@@ -16,11 +16,8 @@ It supports three primary modes of operation: image processing and transfer, fil
    - Compresses and Base64 encodes a specified file.
    - Sends the processed file over the Meshtastic network.
 
-3. **Simple Message Sending**:
-   - Sends a plain text message over the Meshtastic network without additional processing.
-
 ### Parameters:
-  - `--mode`: Specifies the mode of operation (`image_transfer`, `file_transfer`, or `simple_message`).
+  - `--mode`: Specifies the mode of operation (`image_transfer`, or `file_transfer`).
   - `--header`: Template for prepending headers to chunks (use `#` as digit placeholders).
   - `--quality`: JPEG quality factor for optimization (default: 75, used in `image_transfer` mode).
   - `--resize`: Resize dimensions for the image (e.g., `800x600`, used in `image_transfer` mode).
@@ -30,7 +27,6 @@ It supports three primary modes of operation: image processing and transfer, fil
   - `--ssh_key`: SSH identity file for rsync (required if `--upload` is set).
   - `--upload`: Enables uploading of the processed image or file using rsync.
   - `--file_path`: Path to the file to send (required for `file_transfer` mode).
-  - `--message`: Message to send (required for `simple_message` mode).
   - `--chunk_size`: Maximum length of each chunk when sending (default: 200).
   - `--dest`: Destination Node ID for Meshtastic send (default: `!47a78d36`).
   - `--ack`: Enables acknowledgment mode for sending.
@@ -51,10 +47,6 @@ It supports three primary modes of operation: image processing and transfer, fil
   --- To run only the image processing pipeline and optionally upload ---
   python3 meshtastic_sender.py --mode process --quality 75 --resize 800x600 \
     --upload --remote_target "user@host:/remote/path" --ssh_key "/path/to/id_rsa"
-
-  --- To send an already-processed file ---
-  python3 meshtastic_sender.py --mode send --file_path base64_image.gz \
-    --chunk_size 180 --dest '!47a78d36' --connection serial --ack --sleep_delay 1
 
 Use `--help` for full details on all parameters.
 """
@@ -391,12 +383,12 @@ def setup_signal_handlers(sender):
 # --------- Main Routine ----------
 def main():
     parser = argparse.ArgumentParser(
-        description="Meshtastic Sender: Process an image, send a file, or send a simple message via a persistent Meshtastic connection."
+        description="Meshtastic Sender: Process an image or send a file via a persistent Meshtastic connection."
     )
-    parser.add_argument("--mode", choices=["image_transfer", "file_transfer", "simple_message"],
+    parser.add_argument("--mode", choices=["image_transfer", "file_transfer"],
                         required=True,
                         help="Mode to run: 'image_transfer' to process and send an image, "
-                             "'file_transfer' to send a file, or 'simple_message' to send a simple message.")
+                             "'file_transfer' to send a file")
     parser.add_argument("--header", type=str, default="nc",
                         help="Header template (use '#' as digit placeholders)")
     # Parameters for image processing:
@@ -418,8 +410,6 @@ def main():
     # Parameters for sending pipeline:
     parser.add_argument("--file_path", type=str,
                         help="Path to text file to send (required for 'file_transfer' mode)")
-    parser.add_argument("--message", type=str,
-                        help="Message to send (required for 'simple_message' mode)")
     parser.add_argument("--chunk_size", type=int, default=200,
                         help="Maximum length of each chunk when sending")
     parser.add_argument("--dest", type=str, default="!47a78d36",
@@ -457,7 +447,6 @@ def main():
         ("Resize", args.resize),
         ("Output", args.output),
         ("File Path", args.file_path if args.file_path else args.output),
-        ("Message", args.message if args.message else "N/A"),
         ("Chunk Size", args.chunk_size),
         ("Destination", args.dest),
         ("Connection", args.connection),
@@ -556,42 +545,13 @@ def main():
         total_chunks, total_failures = sender.send_all_chunks()
         sender.close_connection()
         end_time = time.time()
-    elif args.mode == "simple_message":
-        if not args.message:
-            logger.error("For simple_message mode, --message is required.")
-            sys.exit(1)
-        message = args.message
-        sender = PersistentMeshtasticSender(
-            file_path=None,  # No file path needed for simple message mode
-            chunk_size=args.chunk_size,
-            dest=args.dest,
-            connection=args.connection,
-            max_retries=args.max_retries,
-            retry_delay=args.retry_delay,
-            header_template=args.header,
-            use_ack=args.ack,
-            sleep_delay=args.sleep_delay,
-            start_delay=args.start_delay
-        )
-        setup_signal_handlers(sender)
-        start_time = time.time()
-        sender.open_connection(tcp_host=args.tcp_host)
-        try:
-            self.interface.sendText(message, self.dest, wantAck=self.use_ack)
-        except Exception as e:
-            logger.error(f"Failed to send simple message: {e}")
-            sys.exit(1)
-        sender.close_connection()
-        end_time = time.time()
 
     # Calculate elapsed time and print execution summary
     elapsed_seconds = end_time - start_time
     formatted_elapsed = time.strftime("%H:%M:%S", time.gmtime(elapsed_seconds))
 
     # Calculate total size of data sent
-    if args.mode == "simple_message":
-        total_size = len(args.message)  # Use the actual message length for simple_message mode
-    elif args.mode in ["image_transfer", "file_transfer"]:
+    if args.mode in ["image_transfer", "file_transfer"]:
         total_size = total_chunks * args.chunk_size  # Approximation based on chunk size
     else:
         total_size = 0  # Default to 0 if mode is unrecognized
