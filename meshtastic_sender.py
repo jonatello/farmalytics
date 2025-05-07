@@ -36,7 +36,7 @@ When in “all” or “process” mode with the upload flag set, the processed 
   - `--ack`: Enables acknowledgment mode for sending.
   - `--max_retries`: Maximum number of retries per chunk (default: 10).
   - `--retry_delay`: Delay in seconds between retries (default: 1).
-  - `--sleep_delay`: Sleep delay in seconds between sending chunks (default: 1.0).
+  - `--sleep_delay`: Sleep delay in seconds between sending chunks (default: 0.1).
   - `--start_delay`: Delay in seconds after sending the initial message but before sending chunks (default: 0.0).
   - `--connection`: Connection mode (`tcp` or `serial`, default: `tcp`).
   - `--tcp_host`: TCP host for Meshtastic connection (default: `localhost`).
@@ -217,7 +217,7 @@ from meshtastic.serial_interface import SerialInterface
 
 DEFAULT_MAX_RETRIES = 10
 DEFAULT_RETRY_DELAY = 1      # seconds
-DEFAULT_SLEEP_DELAY = 1.0    # seconds
+DEFAULT_SLEEP_DELAY = 0.1    # seconds
 
 class PersistentMeshtasticSender:
     """
@@ -322,8 +322,10 @@ class PersistentMeshtasticSender:
         attempt = 0
         while attempt < self.max_retries:
             try:
-                target = self.dest
-                self.interface.sendText(full_message, target, wantAck=self.use_ack)
+                if self.dest is not None:
+                    self.interface.sendText(full_message, self.dest, wantAck=self.use_ack)
+                else:
+                    self.interface.sendText(full_message, wantAck=self.use_ack)
                 remaining = total_chunks - chunk_index
                 logger.info(f"Sent chunk {chunk_index}/{total_chunks} with header '{header}' "
                             f"(Attempt {attempt+1}/{self.max_retries}, {remaining} remaining)")
