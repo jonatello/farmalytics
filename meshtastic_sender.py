@@ -2,32 +2,35 @@
 """
 Meshtastic Sender
 
-This script combines two pipelines:
-  1. Image Processing Pipeline:
-     - Triggers a snapshot capture via a configured snapshot URL.
-     - Copies the snapshot from /var/lib/motion/lastsnap.jpg into the current directory.
-     - Optimizes the JPEG using jpegoptim and jpegtran, then resizes via ImageMagick’s convert.
-     - Compresses the image with Zopfli gzip and Base64 encodes the result.
-     - Writes the Base64 output to a file.
-     
-  2. Persistent Sending Pipeline:
-     - Reads content from a specified file.
-     - Splits the content into fixed-size chunks.
-     - Optionally prepends a header (generated from a template) to each chunk.
-     - Uses a persistent Meshtastic connection (TCP or serial) to send each chunk sequentially,
-       with retries and inter-chunk delays.
+This script provides a flexible and robust pipeline for sending data over a Meshtastic mesh network. 
+It supports three primary modes of operation: image processing and transfer, file transfer, and simple message sending.
+
+### Purpose:
+1. **Image Processing and Transfer**:
+   - Captures a snapshot via a configured snapshot URL.
+   - Optimizes and resizes the image using tools like `jpegoptim` and `ImageMagick`.
+   - Compresses the image using Zopfli gzip and Base64 encodes the result.
+   - Sends the processed image over the Meshtastic network.
+
+2. **File Transfer**:
+   - Compresses and Base64 encodes a specified file.
+   - Sends the processed file over the Meshtastic network.
+
+3. **Simple Message Sending**:
+   - Sends a plain text message over the Meshtastic network without additional processing.
 
 ### Parameters:
-  - `--mode`: Specifies the mode of operation (`process`, `send`, or `all`).
+  - `--mode`: Specifies the mode of operation (`image_transfer`, `file_transfer`, or `simple_message`).
   - `--header`: Template for prepending headers to chunks (use `#` as digit placeholders).
-  - `--quality`: JPEG quality factor for optimization (default: 75).
-  - `--resize`: Resize dimensions for the image (e.g., `800x600`).
-  - `--output`: Output file for the processed image (default: `base64_image.gz`).
-  - `--cleanup`: Enables cleanup of intermediate files after processing.
+  - `--quality`: JPEG quality factor for optimization (default: 75, used in `image_transfer` mode).
+  - `--resize`: Resize dimensions for the image (e.g., `800x600`, used in `image_transfer` mode).
+  - `--output`: Output file for the processed image or file (default: `base64_image.gz`).
+  - `--cleanup`: Enables cleanup of intermediate files after processing (used in `image_transfer` mode).
   - `--remote_target`: Remote path for file upload (required if `--upload` is set).
   - `--ssh_key`: SSH identity file for rsync (required if `--upload` is set).
-  - `--upload`: Enables uploading of the processed image file using rsync.
-  - `--file_path`: Path to the file to send (defaults to the output file if not provided).
+  - `--upload`: Enables uploading of the processed image or file using rsync.
+  - `--file_path`: Path to the file to send (required for `file_transfer` mode).
+  - `--message`: Message to send (required for `simple_message` mode).
   - `--chunk_size`: Maximum length of each chunk when sending (default: 200).
   - `--dest`: Destination Node ID for Meshtastic send (default: `!47a78d36`).
   - `--ack`: Enables acknowledgment mode for sending.
@@ -394,7 +397,7 @@ def main():
                         required=True,
                         help="Mode to run: 'image_transfer' to process and send an image, "
                              "'file_transfer' to send a file, or 'simple_message' to send a simple message.")
-    parser.add_argument("--header", type=str, default="pn",
+    parser.add_argument("--header", type=str, default="nc",
                         help="Header template (use '#' as digit placeholders)")
     # Parameters for image processing:
     parser.add_argument("--quality", type=int, default=75,
@@ -559,6 +562,7 @@ def main():
             sys.exit(1)
         message = args.message
         sender = PersistentMeshtasticSender(
+            file_path=None,  # No file path needed for simple message mode
             chunk_size=args.chunk_size,
             dest=args.dest,
             connection=args.connection,
@@ -570,6 +574,7 @@ def main():
             start_delay=args.start_delay
         )
         setup_signal_handlers(sender)
+        start_time = time.time()
         sender.open_connection(tcp_host=args.tcp_host)
         # Split the message into chunks if necessary
         chunks = sender.chunk_content(message)
