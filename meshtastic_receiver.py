@@ -1,27 +1,38 @@
 #!/usr/bin/env python3
 """
-meshtastic_receiver.py - Meshtastic Receiver & Processor
+Meshtastic Receiver
 
-This script:
-  - Encapsulates all functionality in the MeshtasticProcessor class.
-  - Uses an asynchronous main loop (via asyncio) to avoid busy-waiting.
-  - Consolidates ASCII table printing into a single helper (print_table()).
-  - Filters incoming messages based on the sender_node_id and a message header.
-  - Combines Base64 payloads from messages (after stripping off everything up to
-    and including the first "!" character).
-  - If the --upload flag is set, uploads the processed file using rsync (with lowered
-    CPU priority).
-  - Displays a performance summary (including file size transferred, if applicable)
-    at the end.
+This script provides a robust pipeline for receiving data over a Meshtastic mesh network. 
+It supports receiving and reconstructing data sent in chunks, including images, files, or simple messages.
 
-Usage:
-  python3 meshtastic_receiver.py --run_time <minutes> --sender_node_id <id> --header <prefix> \
-    --output restored.jpg --remote_target <remote_path> --ssh_key <path> --connection tcp \
-    --tcp_host localhost [--poll_interval 10] [--inactivity_timeout 60] [--upload] [--debug]
+### Purpose:
+1. **Receive and Reconstruct Data**:
+   - Listens for incoming messages over the Meshtastic network.
+   - Reconstructs data sent in chunks, including images, files, or plain text messages.
+   - Supports acknowledgment (ACK) for reliable data transfer.
 
-Note:
-  sender_node_id is the original node identifier used for filtering messages.
-  The --upload flag tells the script to attempt file upload after processing.
+2. **File Upload**:
+   - Optionally uploads the reconstructed file to a remote server using `rsync`.
+
+3. **Inactivity Timeout**:
+   - Automatically stops listening after a specified period of inactivity.
+
+### Parameters:
+  - `--output`: Path to save the reconstructed file or message.
+  - `--remote_target`: Remote path for file upload (required if `--upload` is set).
+  - `--ssh_key`: SSH identity file for rsync (required if `--upload` is set).
+  - `--upload`: Enables uploading of the reconstructed file using rsync.
+  - `--sender_node_id`: Node ID of the sender to filter incoming messages (optional).
+  - `--run_time`: Total time in seconds to listen for incoming messages (default: 60).
+  - `--inactivity_timeout`: Time in seconds to stop listening after inactivity (default: 120).
+  - `--header`: Header template to identify and reconstruct chunks (use `#` as digit placeholders).
+  - `--debug`: Enables debug mode for detailed logging.
+
+### Usage Examples:
+
+1. **Receive and Save an Image**:
+   ```bash
+   python3 meshtastic_receiver.py --output restored.jpg --run_time 60 --inactivity_timeout 120 --header nc
 """
 
 import argparse
