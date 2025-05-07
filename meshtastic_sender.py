@@ -350,7 +350,7 @@ class PersistentMeshtasticSender:
 
         logger.info(f"Sending initial message: {initial_message}")
         try:
-            self.interface.sendText(initial_message, wantAck=self.use_ack)
+            self.interface.sendText(initial_message, self.dest, wantAck=self.use_ack)
         except Exception as e:
             logger.error(f"Failed to send initial message: {e}")
             sys.exit(1)
@@ -576,14 +576,11 @@ def main():
         setup_signal_handlers(sender)
         start_time = time.time()
         sender.open_connection(tcp_host=args.tcp_host)
-        # Split the message into chunks if necessary
-        chunks = sender.chunk_content(message)
-        total_chunks = len(chunks)
-        total_failures = 0
-        logger.info(f"Total chunks to send: {total_chunks}")
-        for i, chunk in enumerate(chunks, start=1):
-            failures = sender.send_chunk(chunk, i, total_chunks)
-            total_failures += failures
+        try:
+            self.interface.sendText(message, self.dest, wantAck=self.use_ack)
+        except Exception as e:
+            logger.error(f"Failed to send simple message: {e}")
+            sys.exit(1)
         sender.close_connection()
         end_time = time.time()
 
