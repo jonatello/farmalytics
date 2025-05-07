@@ -22,7 +22,7 @@ It supports receiving and reconstructing data sent in chunks, including images, 
   - `--remote_target`: Remote path for file upload (required if `--upload` is set).
   - `--ssh_key`: SSH identity file for rsync (required if `--upload` is set).
   - `--upload`: Enables uploading of the reconstructed file using rsync.
-  - `--sender_node_id`: Node ID of the sender to filter incoming messages (optional).
+  - `--sender`: Node ID of the sender to filter incoming messages (optional).
   - `--run_time`: Total time in seconds to listen for incoming messages (default: 60).
   - `--inactivity_timeout`: Time in seconds to stop listening after inactivity (default: 120).
   - `--header`: Header template to identify and reconstruct chunks (use `#` as digit placeholders).
@@ -76,7 +76,7 @@ class MeshtasticProcessor:
         Initializes the processor with the provided arguments.
 
         Args:
-          args: Command-line arguments (contains sender_node_id, header, etc.).
+          args: Command-line arguments (contains sender, header, etc.).
         """
         self.args = args
         self.received_messages = {}     # Dictionary mapping header number to full message text.
@@ -116,7 +116,7 @@ class MeshtasticProcessor:
         """
         params = [
             ("run_time (min)", self.args.run_time),
-            ("sender_node_id", self.args.sender_node_id),
+            ("sender", self.args.sender),
             ("header", self.args.header),
             ("output", self.args.output),
             ("remote_target", self.args.remote_target),
@@ -155,16 +155,16 @@ class MeshtasticProcessor:
         Callback to process an incoming message packet.
 
         Filters the incoming packet based on:
-          - sender_node_id (the original filtering parameter).
+          - sender (the original filtering parameter).
           - The message header (it must start with the expected header string).
 
         After validation, it extracts the numeric header and stores the full message.
         """
         try:
-            # Check that the message originates from the expected sender_node_id.
+            # Check that the message originates from the expected sender.
             raw_sender = packet.get("fromId")
-            if not raw_sender or raw_sender.lstrip("!") != self.args.sender_node_id:
-                logger.debug(f"Ignored message from sender '{raw_sender}'; expected sender_node_id '{self.args.sender_node_id}'.")
+            if not raw_sender or raw_sender.lstrip("!") != self.args.sender:
+                logger.debug(f"Ignored message from sender '{raw_sender}'; expected sender '{self.args.sender}'.")
                 return
 
             # Extract and sanitize the message text.
@@ -199,7 +199,7 @@ class MeshtasticProcessor:
                     logger.debug(f"Ignored duplicate message: {header_part}!")
                 else:
                     self.received_messages[header_num] = text
-                    logger.info(f"Stored message {header_part}! from sender {self.args.sender_node_id}.")
+                    logger.info(f"Stored message {header_part}! from sender {self.args.sender}.")
                     if header_num > self.highest_header:
                         self.highest_header = header_num
                         logger.info(f"Updated highest header to {self.highest_header}.")
@@ -381,7 +381,7 @@ def main():
         description="Meshtastic Receiver with Asynchronous Processing and Robust Error Handling"
     )
     parser.add_argument("--run_time", type=int, required=True, help="Run time in minutes.")
-    parser.add_argument("--sender_node_id", required=True, help="Sender node ID to filter messages from.")
+    parser.add_argument("--sender", required=True, help="Sender node ID to filter messages from.")
     parser.add_argument("--header", type=str, default="pn", help="Expected message header prefix (before '!').")
     parser.add_argument("--output", type=str, default="restored.jpg", help="Output file.")
     parser.add_argument("--remote_target", type=str, required=True, help="Remote path for file upload.")
@@ -398,7 +398,7 @@ def main():
     processor = MeshtasticProcessor(args)
     processor.print_table("Startup Summary", [
         ("run_time (min)", args.run_time),
-        ("sender_node_id", args.sender_node_id),
+        ("sender", args.sender),
         ("header", args.header),
         ("output", args.output),
         ("remote_target", args.remote_target),
