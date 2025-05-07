@@ -130,9 +130,9 @@ class MeshtasticProcessor:
         ]
         self.print_table("Startup Summary", params)
 
-    def print_performance_summary(self, total_runtime, total_msgs, missing_msgs, file_size):
+    def print_execution_summary(self, total_runtime, total_msgs, missing_msgs, file_size):
         """
-        Prints a performance summary after processing.
+        Prints a execution summary after processing.
 
         Args:
           total_runtime (float): Total running time in seconds.
@@ -148,7 +148,7 @@ class MeshtasticProcessor:
             ("Estimated Missing Msgs", missing_msgs),
             ("Transferred File Size (bytes)", file_size),
         ]
-        self.print_table("Performance Summary", stats)
+        self.print_table("Execution Summary", stats)
 
     def onReceive(self, packet, interface=None):
         """
@@ -297,7 +297,7 @@ class MeshtasticProcessor:
         This loop periodically checks progress. After collection stops, it:
           - Combines the message payloads.
           - If --upload is set, performs the file upload.
-          - Prints the performance summary.
+          - Prints the execution summary.
         """
         self.connect_meshtastic()
         end_time = self.start_time + self.args.run_time * 60
@@ -346,7 +346,7 @@ class MeshtasticProcessor:
             file_size = os.path.getsize(self.args.output)
         else:
             file_size = "N/A"
-        self.print_table("Performance Summary", [
+        self.print_table("Execution Summary", [
             ("Total Runtime (sec)", f"{total_runtime:.2f}"),
             ("Total Unique Messages", total_msgs),
             ("Highest Header Processed", self.highest_header),
