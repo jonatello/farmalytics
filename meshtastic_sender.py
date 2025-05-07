@@ -511,7 +511,33 @@ def main():
         if not args.file_path:
             logger.error("For file_transfer mode, --file_path is required.")
             sys.exit(1)
-        file_path = Path(args.file_path)
+
+        print("Running file processing pipeline...")
+        compressed_file = "compressed_file.gz"
+        print(f"Compressing file using Zopfli gzip ...")
+        with open(args.file_path, "rb") as f_in:
+            data = f_in.read()
+        compressed_data = zopfli.gzip.compress(data)
+        with open(compressed_file, "wb") as f_out:
+            f_out.write(compressed_data)
+        zipped_size = os.stat(compressed_file).st_size
+        print(f"Size after compression: {zipped_size} bytes")
+        
+        print("Encoding compressed image to Base64 ...")
+        base64_encoded_file = "base64_encoded_file.gz"
+        with open(compressed_file, "rb") as f_in:
+            zipped_content = f_in.read()
+        base64_encoded = base64.b64encode(zipped_content)
+        with open(base64_encoded_file, "wb") as f_out:
+            f_out.write(base64_encoded)
+        base64_size = os.stat(base64_encoded_file).st_size
+        print(f"Size after Base64 encoding: {base64_size} bytes")
+
+        if args.upload:
+            print("Uploading processed file...")
+            upload_file(base64_encoded_file, args.remote_target, args.ssh_key)
+
+        file_path = Path(base64_encoded_file)
         sender = PersistentMeshtasticSender(
             file_path=file_path,
             chunk_size=args.chunk_size,
