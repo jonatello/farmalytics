@@ -16,9 +16,6 @@ This script combines two pipelines:
      - Optionally prepends a header (generated from a template) to each chunk.
      - Uses a persistent Meshtastic connection (TCP or serial) to send each chunk sequentially,
        with retries and inter-chunk delays.
-       
-If no mode is specified, the script defaults to “all”—that is, it will run both pipelines in sequence.
-When in “all” or “process” mode with the upload flag set, the processed image file is uploaded via rsync.
 
 ### Parameters:
   - `--mode`: Specifies the mode of operation (`process`, `send`, or `all`).
