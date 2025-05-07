@@ -9,8 +9,6 @@ This script:
   - Filters incoming messages based on the sender_node_id and a message header.
   - Combines Base64 payloads from messages (after stripping off everything up to
     and including the first "!" character).
-  - If the --process_image flag is set, decodes and decompresses the combined Base64
-    data and writes an image file.
   - If the --upload flag is set, uploads the processed file using rsync (with lowered
     CPU priority).
   - Displays a performance summary (including file size transferred, if applicable)
@@ -19,13 +17,11 @@ This script:
 Usage:
   python3 meshtastic_receiver.py --run_time <minutes> --sender_node_id <id> --header <prefix> \
     --output restored.jpg --remote_target <remote_path> --ssh_key <path> --connection tcp \
-    --tcp_host localhost [--poll_interval 10] [--inactivity_timeout 60] [--process_image] [--upload] [--debug]
+    --tcp_host localhost [--poll_interval 10] [--inactivity_timeout 60] [--upload] [--debug]
 
 Note:
   sender_node_id is the original node identifier used for filtering messages.
-  The --process_image flag tells the script that the Base64 data is an image and that
-  image-specific post-processing should occur. The --upload flag tells the script to
-  attempt file upload after processing.
+  The --upload flag tells the script to attempt file upload after processing.
 """
 
 import argparse
@@ -118,7 +114,6 @@ class MeshtasticProcessor:
             ("inactivity_timeout (sec)", self.args.inactivity_timeout),
             ("connection", self.args.connection),
             ("tcp_host", self.args.tcp_host),
-            ("process_image", self.args.process_image),
             ("upload", self.args.upload),
             ("debug", self.args.debug),
         ]
@@ -243,12 +238,10 @@ class MeshtasticProcessor:
                 else:
                     self.combined_messages.append(msg)
 
-    def decode_and_save_image(self):
+    def decode_and_save_file(self):
         """
         Decodes the concatenated Base64 payload and decompresses the gzip data,
-        then saves the result to an output image file.
-
-        This step only runs if the --process_image flag is set.
+        then saves the result to an output file.
         """
         logger.info("Decoding Base64 and decompressing Gzip...")
         combined_data = "".join(self.combined_messages)
@@ -259,26 +252,26 @@ class MeshtasticProcessor:
             decompressed = gzip.decompress(decoded)
             with open(self.args.output, "wb") as f:
                 f.write(decompressed)
-            logger.info(f"Image saved to {self.args.output}")
+            logger.info(f"File saved to {self.args.output}")
         except Exception as e:
             logger.error(f"Error during decoding/decompression: {e}")
             sys.exit(1)
 
-    def upload_image(self):
+    def upload_file(self):
         """
-        Uploads the output image file to a remote destination using rsync.
+        Uploads the output file to a remote destination using rsync.
 
         The command is executed with a lower CPU priority using 'nice'
         and is retried up to three times.
 
         This step only runs if the --upload flag is set.
         """
-        remote_path = f"{self.args.remote_target.rstrip('/')}/{time.strftime('%Y%m%d%H%M%S')}-restored.jpg"
+        remote_path = f"{self.args.remote_target.rstrip('/')}/{time.strftime('%Y%m%d%H%M%S')}-{os.path.basename(self.args.output)}"
         cmd = ["nice", "-n", "10", "rsync", "-vz", "-e", f"ssh -i {self.args.ssh_key}", self.args.output, remote_path]
         for attempt in range(1, 4):
             try:
                 subprocess.check_call(cmd)
-                logger.info(f"Image uploaded to {remote_path}")
+                logger.info(f"File uploaded to {remote_path}")
                 return
             except subprocess.CalledProcessError as e:
                 logger.error(f"Attempt {attempt}: Upload error: {e}")
@@ -292,7 +285,6 @@ class MeshtasticProcessor:
 
         This loop periodically checks progress. After collection stops, it:
           - Combines the message payloads.
-          - If --process_image is set, decodes and saves the image.
           - If --upload is set, performs the file upload.
           - Prints the performance summary.
         """
@@ -328,13 +320,10 @@ class MeshtasticProcessor:
 
         # Process collected messages.
         self.combine_messages()
-        if self.args.process_image:
-            self.decode_and_save_image()
-        else:
-            logger.info("Skipping image processing because --process_image flag is not set.")
+        self.decode_and_save_file()
 
         if self.args.upload:
-            self.upload_image()
+            self.upload_file()
         else:
             logger.info("Skipping file upload because --upload flag is not set.")
 
@@ -342,7 +331,7 @@ class MeshtasticProcessor:
         with self.state_lock:
             total_msgs = len(self.received_messages)
         missing_msgs = self.highest_header - total_msgs if self.highest_header > total_msgs else 0
-        if self.args.process_image and os.path.exists(self.args.output):
+        if os.path.exists(self.args.output):
             file_size = os.path.getsize(self.args.output)
         else:
             file_size = "N/A"
@@ -383,16 +372,15 @@ def main():
     parser.add_argument("--run_time", type=int, required=True, help="Run time in minutes.")
     parser.add_argument("--sender_node_id", required=True, help="Sender node ID to filter messages from.")
     parser.add_argument("--header", type=str, default="pn", help="Expected message header prefix (before '!').")
-    parser.add_argument("--output", type=str, default="restored.jpg", help="Output image file.")
-    parser.add_argument("--remote_target", type=str, required=True, help="Remote path for image upload.")
+    parser.add_argument("--output", type=str, default="restored.jpg", help="Output file.")
+    parser.add_argument("--remote_target", type=str, required=True, help="Remote path for file upload.")
     parser.add_argument("--ssh_key", type=str, required=True, help="SSH identity file for rsync.")
     parser.add_argument("--poll_interval", type=int, default=10, help="Poll interval in seconds.")
     parser.add_argument("--inactivity_timeout", type=int, default=60, help="Inactivity timeout in seconds.")
     parser.add_argument("--connection", type=str, choices=["tcp", "serial"], required=True, help="Connection mode.")
     parser.add_argument("--tcp_host", type=str, default="localhost", help="TCP host (default: localhost).")
     parser.add_argument("--debug", action="store_true", help="Enable debug mode for detailed logging.")
-    parser.add_argument("--process_image", action="store_true", help="If set, process Base64 data as an image (decode and decompress).")
-    parser.add_argument("--upload", action="store_true", help="If set, upload the processed image file using rsync.")
+    parser.add_argument("--upload", action="store_true", help="If set, upload the processed file using rsync.")
     args = parser.parse_args()
 
     configure_logging(args.debug)
@@ -408,7 +396,6 @@ def main():
         ("inactivity_timeout (sec)", args.inactivity_timeout),
         ("connection", args.connection),
         ("tcp_host", args.tcp_host),
-        ("process_image", args.process_image),
         ("upload", args.upload),
         ("debug", args.debug),
     ])
