@@ -301,8 +301,9 @@ class PersistentMeshtasticSender:
     def close_connection(self):
         """Closes the persistent Meshtastic connection."""
         try:
-            self.interface.close()
-            logger.info("Persistent connection closed.")
+            if self.interface:
+                self.interface.close()
+                logger.info("Persistent connection closed.")
         except Exception as e:
             logger.error(f"Error closing connection: {e}")
 
@@ -322,10 +323,8 @@ class PersistentMeshtasticSender:
         attempt = 0
         while attempt < self.max_retries:
             try:
-                if self.dest is not None:
-                    self.interface.sendText(full_message, self.dest, wantAck=self.use_ack)
-                else:
-                    self.interface.sendText(full_message, wantAck=self.use_ack)
+                # Send the message
+                self.interface.sendText(full_message, self.dest, wantAck=self.use_ack)
                 remaining = total_chunks - chunk_index
                 logger.info(f"Sent chunk {chunk_index}/{total_chunks} with header '{header}' "
                             f"(Attempt {attempt+1}/{self.max_retries}, {remaining} remaining)")
@@ -376,6 +375,8 @@ class PersistentMeshtasticSender:
             failures = self.send_chunk(chunk, i, total_chunks)
             total_failures += failures
             time.sleep(self.sleep_delay)
+
+        logger.info("All chunks sent successfully.")
         return total_chunks, total_failures
 
 # --------- Signal Handling for Sending ----------
