@@ -38,7 +38,7 @@ It supports three primary modes of operation: image processing and transfer, and
   - `--tcp_host`: TCP host for Meshtastic connection (default: `localhost`).
   - `--debug`: Enables debug mode for detailed logging.
 
-### Updated Usage Examples:
+### Usage Examples:
   --- To process an image and then upload and send it ---
   python3 meshtastic_sender.py --mode all --header nc --upload \
     --quality 75 --resize 800x600 --remote_target "user@host:/remote/path" --ssh_key "/path/to/id_rsa" \
