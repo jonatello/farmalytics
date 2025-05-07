@@ -32,8 +32,7 @@ When in “all” or “process” mode with the upload flag set, the processed 
   - `--upload`: Enables uploading of the processed image file using rsync.
   - `--file_path`: Path to the file to send (defaults to the output file if not provided).
   - `--chunk_size`: Maximum length of each chunk when sending (default: 200).
-  - `--ch_index`: Starting chunk index (default: 1).
-  - `--dest`: Destination token for Meshtastic send (default: `!47a78d36`).
+  - `--dest`: Destination Node ID for Meshtastic send (default: `!47a78d36`).
   - `--ack`: Enables acknowledgment mode for sending.
   - `--max_retries`: Maximum number of retries per chunk (default: 10).
   - `--retry_delay`: Delay in seconds between retries (default: 1).
@@ -228,14 +227,13 @@ class PersistentMeshtasticSender:
     An optional header (derived from a template) can be prepended to each chunk.
     Includes retry logic and a delay between sends.
     """
-    def __init__(self, file_path: Path, chunk_size: int, ch_index: int, dest: str,
+    def __init__(self, file_path: Path, chunk_size: int, dest: str,
                  connection: str, max_retries: int = DEFAULT_MAX_RETRIES,
                  retry_delay: int = DEFAULT_RETRY_DELAY, header_template: str = None,
                  use_ack: bool = False, sleep_delay: float = DEFAULT_SLEEP_DELAY,
                  start_delay: float = 0.0):
         self.file_path = file_path
         self.chunk_size = chunk_size
-        self.ch_index = ch_index
         self.dest = dest
         self.connection = connection.lower()
         self.max_retries = max_retries
@@ -324,8 +322,7 @@ class PersistentMeshtasticSender:
         attempt = 0
         while attempt < self.max_retries:
             try:
-                # Use ch_index if provided, otherwise use dest
-                target = self.ch_index if self.ch_index else self.dest
+                target = self.dest
                 self.interface.sendText(full_message, target, wantAck=self.use_ack)
                 remaining = total_chunks - chunk_index
                 logger.info(f"Sent chunk {chunk_index}/{total_chunks} with header '{header}' "
@@ -422,12 +419,8 @@ def main():
                         help="Message to send (required for 'simple_message' mode)")
     parser.add_argument("--chunk_size", type=int, default=200,
                         help="Maximum length of each chunk when sending")
-    # Mutually exclusive group for ch_index and dest
-    group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument("--ch_index", type=int,
-                       help="Starting chunk index (alternative to --dest)")
-    group.add_argument("--dest", type=str, default="!47a78d36",
-                       help="Destination token for Meshtastic send (default: '!47a78d36')")
+    parser.add_argument("--dest", type=str, default="!47a78d36",
+                       help="Destination Node ID for Meshtastic send (default: '!47a78d36')")
     parser.add_argument("--ack", action="store_true",
                         help="Enable ACK mode for sending")
     parser.add_argument("--max_retries", type=int, default=DEFAULT_MAX_RETRIES,
@@ -496,7 +489,6 @@ def main():
         sender = PersistentMeshtasticSender(
             file_path=file_path,
             chunk_size=args.chunk_size,
-            ch_index=args.ch_index,
             dest=args.dest,
             connection=args.connection,
             max_retries=args.max_retries,
@@ -520,7 +512,6 @@ def main():
         sender = PersistentMeshtasticSender(
             file_path=file_path,
             chunk_size=args.chunk_size,
-            ch_index=args.ch_index,
             dest=args.dest,
             connection=args.connection,
             max_retries=args.max_retries,
@@ -543,7 +534,6 @@ def main():
         message = args.message
         sender = PersistentMeshtasticSender(
             chunk_size=args.chunk_size,
-            ch_index=args.ch_index,
             dest=args.dest,
             connection=args.connection,
             max_retries=args.max_retries,
