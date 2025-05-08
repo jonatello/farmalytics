@@ -98,7 +98,7 @@ logger = logging.getLogger("MeshtasticSender")
 
 # --------- Image Processing Pipeline Function ----------
 def optimize_compress_zip_base64encode_jpg(
-        quality=75,
+        quality=90,
         resize="800x600",
         snapshot_url="http://localhost:8080/0/action/snapshot",
         output_file="base64_image.gz",
@@ -137,6 +137,15 @@ def optimize_compress_zip_base64encode_jpg(
     source_snapshot = "/var/lib/motion/lastsnap.jpg"
     print(f"Copying snapshot from {source_snapshot} to {image_path} ...")
     shutil.copy2(source_snapshot, image_path)
+
+    # Generate an ASCII preview of the image using jp2a
+    print(f"Generating ASCII preview of {image_path} ...")
+    try:
+        subprocess.run(["jp2a", "--width=80", image_path], check=True)
+    except FileNotFoundError:
+        print("Error: jp2a is not installed or not found in the system PATH.")
+    except subprocess.CalledProcessError as e:
+        print(f"Error generating ASCII preview: {e}")
     
     # Execute cleanup logic only if the cleanup flag is set
     if cleanup:
