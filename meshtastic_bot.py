@@ -222,7 +222,7 @@ class MeshtasticBot:
             if text == "hi!":
                 logger.info("Received 'hi!' command; replying 'well hai!'")
                 if self.interface:
-                    self.interface.sendText("well hai!", wantAck=True)
+                    self.interface.sendText("well hai 😺!", wantAck=True)
                 return
 
             if text == "sysinfo!":
@@ -244,12 +244,18 @@ class MeshtasticBot:
             if text == "ping!":
                 logger.info("Received 'ping!' command; replying with pong and signal info")
                 if self.interface:
+
+                    logger.debug(f"Full packet content: {packet}")
+
                     # Extract SNR and RSSI values from the packet
                     snr = packet.get("rxSnr", "N/A")
                     rssi = packet.get("rxRssi", "N/A")
 
-                    # Send "pong!" response with SNR and RSSI values
-                    self.interface.sendText("pong! SNR: {snr} dB, RSSI: {rssi} dBm", wantAck=True)
+                    # Prepare the response message
+                    response_message = f"pong! SNR: {snr} dB, RSSI: {rssi} dBm"
+
+                    # Send the response
+                    self.interface.sendText(response_message, wantAck=True)
                 return
 
             # Handle the sendimage! command using query-string style.
