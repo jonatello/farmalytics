@@ -80,14 +80,13 @@ class MeshtasticProcessor:
         """
         self.args = args
         self.received_messages = {}     # Dictionary mapping header number to full message text.
-        self.duplicate_count = 0         # Count of duplicate messages received.
-        self.combined_messages = []      # List of payload strings (after header removal).
-        self.state_lock = Lock()         # Lock to protect shared state.
-        self.running = True              # Controls the main loop execution.
-        self.iface = None                # Meshtastic interface object.
+        self.duplicate_count = 0        # Count of duplicate messages received.
+        self.combined_messages = []     # List of payload strings (after header removal).
+        self.state_lock = Lock()        # Lock to protect shared state.
+        self.running = True             # Controls the main loop execution.
+        self.iface = None               # Meshtastic interface object.
         self.last_message_time = time.time()  # Timestamp of the last received message.
-        self.highest_header = 0          # Highest header number seen so far.
-        self.start_time = time.time()    # Timestamp marking script start.
+        self.start_time = time.time()   # Timestamp marking script start.
         self.header_digit_pattern = re.compile(r"\d+")  # Precompiled regex for extracting digits from header.
         self.last_progress_time = time.time()  # Timestamp for progress updates.
 
@@ -132,7 +131,7 @@ class MeshtasticProcessor:
 
     def print_execution_summary(self, total_runtime, total_msgs, missing_msgs, file_size):
         """
-        Prints a execution summary after processing.
+        Prints an execution summary after processing.
 
         Args:
           total_runtime (float): Total running time in seconds.
@@ -143,7 +142,6 @@ class MeshtasticProcessor:
         stats = [
             ("Total Runtime (sec)", f"{total_runtime:.2f}"),
             ("Total Unique Messages", total_msgs),
-            ("Highest Header Processed", self.highest_header),
             ("Duplicate Messages", self.duplicate_count),
             ("Estimated Missing Msgs", missing_msgs),
             ("Transferred File Size (bytes)", file_size),
@@ -200,9 +198,6 @@ class MeshtasticProcessor:
                 else:
                     self.received_messages[header_num] = text
                     logger.info(f"Stored message {header_part}! from sender {self.args.sender}.")
-                    if header_num > self.highest_header:
-                        self.highest_header = header_num
-                        logger.info(f"Updated highest header to {self.highest_header}.")
                     self.last_message_time = time.time()
 
         except Exception as e:
@@ -313,12 +308,19 @@ class MeshtasticProcessor:
             if now - self.last_progress_time >= self.args.poll_interval:
                 with self.state_lock:
                     total_msgs = len(self.received_messages)
-                    current_highest = self.highest_header
                 remaining_time = end_time - now
                 logger.info(
-                    f"Progress: {total_msgs} messages, highest header: {current_highest}, time remaining: {remaining_time:.1f} sec"
+                    f"Progress: {total_msgs} messages received, expected: {self.args.expected_messages}, "
+                    f"time remaining: {remaining_time:.1f} sec"
                 )
                 self.last_progress_time = now
+
+            # Stop if all expected messages are received
+            with self.state_lock:
+                if len(self.received_messages) >= self.args.expected_messages:
+                    logger.info("All expected messages received. Ending collection.")
+                    self.running = False
+                    break
 
             await asyncio.sleep(0.5)
 
@@ -341,19 +343,12 @@ class MeshtasticProcessor:
         total_runtime = time.time() - self.start_time
         with self.state_lock:
             total_msgs = len(self.received_messages)
-        missing_msgs = self.highest_header - total_msgs if self.highest_header > total_msgs else 0
+        missing_msgs = self.args.expected_messages - total_msgs if self.args.expected_messages > total_msgs else 0
         if os.path.exists(self.args.output):
             file_size = os.path.getsize(self.args.output)
         else:
             file_size = "N/A"
-        self.print_table("Execution Summary", [
-            ("Total Runtime (sec)", f"{total_runtime:.2f}"),
-            ("Total Unique Messages", total_msgs),
-            ("Highest Header Processed", self.highest_header),
-            ("Duplicate Messages", self.duplicate_count),
-            ("Estimated Missing Msgs", missing_msgs),
-            ("Transferred File Size (bytes)", file_size)
-        ])
+        self.print_execution_summary(total_runtime, total_msgs, missing_msgs, file_size)
 
 
 # ---------------------- Signal Handling ----------------------
@@ -392,6 +387,7 @@ def main():
     parser.add_argument("--tcp_host", type=str, default="localhost", help="TCP host (default: localhost).")
     parser.add_argument("--debug", action="store_true", help="Enable debug mode for detailed logging.")
     parser.add_argument("--upload", action="store_true", help="If set, upload the processed file using rsync.")
+    parser.add_argument("--expected_messages", type=int, required=True, help="Total number of expected messages.")
     args = parser.parse_args()
 
     configure_logging(args.debug)
@@ -408,6 +404,7 @@ def main():
         ("connection", args.connection),
         ("tcp_host", args.tcp_host),
         ("upload", args.upload),
+        ("expected_messages", args.expected_messages),
         ("debug", args.debug),
     ])
     setup_signal_handlers(processor)
