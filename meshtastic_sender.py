@@ -385,10 +385,10 @@ def main():
     parser = argparse.ArgumentParser(
         description="Meshtastic Sender: Process an image or send a file via a persistent Meshtastic connection."
     )
-    parser.add_argument("--mode", choices=["image-transfer", "file-transfer"],
+    parser.add_argument("--mode", choices=["image_transfer", "file_transfer"],
                         required=True,
-                        help="Mode to run: 'image-transfer' to process and send an image, "
-                             "'file-transfer' to send a file")
+                        help="Mode to run: 'image_transfer' to process and send an image, "
+                             "'file_transfer' to send a file")
     parser.add_argument("--header", type=str, default="nc",
                         help="Header template (use '#' as digit placeholders)")
     # Parameters for image processing:
@@ -401,34 +401,34 @@ def main():
     parser.add_argument("--cleanup", action="store_true",
                         help="Enable cleanup of intermediate files after processing (default: off)")
     # Upload parameters (only required if --upload is set)
-    parser.add_argument("--remote-target", type=str,
+    parser.add_argument("--remote_target", type=str,
                         help="Remote path for file upload (required if --upload is set)")
-    parser.add_argument("--ssh-key", type=str,
+    parser.add_argument("--ssh_key", type=str,
                         help="SSH identity file for rsync (required if --upload is set)")
     parser.add_argument("--upload", action="store_true",
-                        help="Upload the processed image file using rsync (requires --remote-target and --ssh-key)")
+                        help="Upload the processed image file using rsync (requires --remote_target and --ssh_key)")
     # Parameters for sending pipeline:
-    parser.add_argument("--file-path", type=str,
-                        help="Path to text file to send (required for 'file-transfer' mode)")
-    parser.add_argument("--chunk-size", type=int, default=200,
+    parser.add_argument("--file_path", type=str,
+                        help="Path to text file to send (required for 'file_transfer' mode)")
+    parser.add_argument("--chunk_size", type=int, default=200,
                         help="Maximum length of each chunk when sending")
     parser.add_argument("--dest", type=str, default="!47a78d36",
                        help="Destination Node ID for Meshtastic send (default: '!47a78d36')")
     parser.add_argument("--ack", action="store_true",
                         help="Enable ACK mode for sending")
-    parser.add_argument("--max-retries", type=int, default=DEFAULT_MAX_RETRIES,
+    parser.add_argument("--max_retries", type=int, default=DEFAULT_MAX_RETRIES,
                         help="Maximum number of retries per chunk")
-    parser.add_argument("--retry-delay", type=int, default=DEFAULT_RETRY_DELAY,
+    parser.add_argument("--retry_delay", type=int, default=DEFAULT_RETRY_DELAY,
                         help="Delay in seconds between retries")
-    parser.add_argument("--sleep-delay", type=float, default=DEFAULT_SLEEP_DELAY,
+    parser.add_argument("--sleep_delay", type=float, default=DEFAULT_SLEEP_DELAY,
                         help="Sleep delay in seconds between sending chunks")
-    parser.add_argument("--start-delay", type=float, default=0.0,
+    parser.add_argument("--start_delay", type=float, default=0.0,
                         help="Delay in seconds after sending the initial message but before sending chunks")
     parser.add_argument("--debug", action="store_true",
                         help="Enable debug mode for detailed logging")
     parser.add_argument("--connection", type=str, choices=["tcp", "serial"], default="tcp",
                         help="Connection mode: 'tcp' or 'serial'")
-    parser.add_argument("--tcp-host", type=str, default="localhost",
+    parser.add_argument("--tcp_host", type=str, default="localhost",
                         help="TCP host (default: localhost, used only in TCP mode)")
     args = parser.parse_args()
 
