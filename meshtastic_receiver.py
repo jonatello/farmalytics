@@ -388,7 +388,7 @@ def main():
     parser.add_argument("--ssh_key", type=str, required=True, help="SSH identity file for rsync.")
     parser.add_argument("--poll_interval", type=int, default=10, help="Poll interval in seconds.")
     parser.add_argument("--inactivity_timeout", type=int, default=60, help="Inactivity timeout in seconds.")
-    parser.add_argument("--connection", type=str, choices=["tcp", "serial"], required=True, help="Connection mode.")
+    parser.add_argument("--connection", type=str, default="tcp", choices=["tcp", "serial"], help="Connection mode.")
     parser.add_argument("--tcp_host", type=str, default="localhost", help="TCP host (default: localhost).")
     parser.add_argument("--debug", action="store_true", help="Enable debug mode for detailed logging.")
     parser.add_argument("--upload", action="store_true", help="If set, upload the processed file using rsync.")
