@@ -22,6 +22,7 @@ It supports receiving and reconstructing data sent in chunks, including images, 
   - `--remote_target`: Remote path for file upload (required if `--upload` is set).
   - `--ssh_key`: SSH identity file for rsync (required if `--upload` is set).
   - `--upload`: Enables uploading of the reconstructed file using rsync.
+  - `--expected_messages`: Total number of expected messages to receive (required).
   - `--sender`: Node ID of the sender to filter incoming messages (optional).
   - `--run_time`: Total time in seconds to listen for incoming messages (default: 60).
   - `--inactivity_timeout`: Time in seconds to stop listening after inactivity (default: 120).
@@ -32,7 +33,7 @@ It supports receiving and reconstructing data sent in chunks, including images, 
 
 1. **Receive and Save an Image**:
    ```bash
-   python3 meshtastic_receiver.py --output restored.jpg --run_time 60 --inactivity_timeout 120 --header nc
+   python3 meshtastic_receiver.py --output restored.jpg --run_time 60 --inactivity_timeout 120 --expected_messages 100 --header nc
 """
 
 import argparse
