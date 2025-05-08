@@ -60,6 +60,9 @@ from pubsub import pub
 # The sender logic remains in meshtastic_sender.py.
 SENDER_SCRIPT = "meshtastic_sender.py"
 
+# The receiver logic remains in meshtastic_receiver.py.
+RECEIVER_SCRIPT = "meshtastic_receiver.py"
+
 # ---------------------- Logging Configuration ----------------------
 def configure_logging(debug_mode):
     """
@@ -147,7 +150,10 @@ def get_help_text():
         "  ping!             - Replies with pong!\n"
         "  sendimage!<query> - Sends an image using query-string parameters\n"
         "                      For example:\n"
-        "                      sendimage!header=myHeader&chunk_size=180&resize=800x600&quality=75\n"
+        "                      sendimage!dest=47a78d36&header=nc&chunk_size=180&resize=800x600&quality=75\n"
+        "  receiveimage!<query> - Receives an image using query-string parameters\n"
+        "                      For example:\n"
+        "                      receiveimage!output=myImage.jpg\n"
     )
 
 # ---------------------- Bot Class ----------------------
@@ -216,14 +222,14 @@ class MeshtasticBot:
             if text == "hi!":
                 logger.info("Received 'hi!' command; replying 'well hai!'")
                 if self.interface:
-                    self.interface.sendText("well hai!")
+                    self.interface.sendText("well hai!", wantAck=True)
                 return
 
             if text == "sysinfo!":
                 logger.info("Received 'sysinfo!' command; sending consolidated system info")
                 if self.interface:
                     for line in get_consolidated_sysinfo().splitlines():
-                        self.interface.sendText(line)
+                        self.interface.sendText(line, wantAck=True)
                         time.sleep(0.5)
                 return
 
@@ -231,14 +237,19 @@ class MeshtasticBot:
                 logger.info("Received 'help!' command; sending help text")
                 if self.interface:
                     for line in get_help_text().splitlines():
-                        self.interface.sendText(line)
+                        self.interface.sendText(line, wantAck=True)
                         time.sleep(0.5)
                 return
 
             if text == "ping!":
-                logger.info("Received 'ping!' command; replying with pong!")
+                logger.info("Received 'ping!' command; replying with pong and signal info")
                 if self.interface:
-                    self.interface.sendText("pong!")
+                    # Extract SNR and RSSI values from the packet
+                    snr = packet.get("rxSnr", "N/A")
+                    rssi = packet.get("rxRssi", "N/A")
+
+                    # Send "pong!" response with SNR and RSSI values
+                    self.interface.sendText("pong! SNR: {snr} dB, RSSI: {rssi} dBm", wantAck=True)
                 return
 
             # Handle the sendimage! command using query-string style.
@@ -266,6 +277,33 @@ class MeshtasticBot:
                     logger.info("meshtastic_sender.py output: %s", result.stdout)
                 except subprocess.CalledProcessError as e:
                     logger.error("Error executing sendimage! command: %s", e)
+                return
+
+            # Handle the receiveimage! command using query-string style.
+            if text.startswith("receiveimage!"):
+                qs_string = text[len("receiveimage!"):].strip()
+                # If no "=" is present, assume the entire string is the output file.
+                if "=" not in qs_string:
+                    qs_string = f"output={qs_string}"
+                params = parse_qs(qs_string)
+                cmd_args = build_receiver_command(params)
+                cmd = ["python3", RECEIVER_SCRIPT] + cmd_args
+                logger.info("Received 'receiveimage!' command. Running: %s", " ".join(cmd))
+                if self.interface:
+                    try:
+                        self.interface.close()
+                        logger.info("Closed Meshtastic interface for receiveimage!")
+                    except Exception as e:
+                        logger.error("Error closing interface: %s", e)
+                    self.interface = None
+                time.sleep(5)
+                try:
+                    result = subprocess.run(cmd, shell=False, check=True,
+                                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                            universal_newlines=True)
+                    logger.info("meshtastic_receiver.py output: %s", result.stdout)
+                except subprocess.CalledProcessError as e:
+                    logger.error("Error executing receiveimage! command: %s", e)
                 return
 
             logger.info("No matching command for message: %s", text)
@@ -297,6 +335,24 @@ class MeshtasticBot:
                     logger.info("Closed Meshtastic interface.")
                 except Exception as e:
                     logger.error("Error closing Meshtastic interface: %s", e)
+
+# ---------------------- Helper Functions ----------------------
+def build_receiver_command(params):
+    """
+    Builds the command-line arguments for the meshtastic_receiver.py script based on query-string parameters.
+
+    Args:
+      params (dict): Parsed query-string parameters.
+
+    Returns:
+      list: List of command-line arguments.
+    """
+    args = []
+    for key, value in params.items():
+        if len(value) > 0:
+            args.append(f"--{key}")
+            args.append(value[0])
+    return args
 
 # ---------------------- Main Entry Point ----------------------
 def main():
