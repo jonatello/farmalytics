@@ -80,6 +80,7 @@ def print_table(title, items):
     for key, value in items:
         print("| {:<{w1}} | {:<{w2}} |".format(key, str(value), w1=table_width1 - 2, w2=table_width2 - 2))
     print(separator)
+    sys.stdout.flush()  # Ensure output is flushed
 
 # --------- Logging Configuration ----------
 def configure_logging(debug_mode):
@@ -300,12 +301,33 @@ class PersistentMeshtasticSender:
         """Closes the persistent Meshtastic connection."""
         try:
             if self.interface:
+                logger.info("Stopping Meshtastic threads...")
+                if hasattr(self.interface, "stop"):
+                    try:
+                        self.interface.stop()  # Attempt to stop all threads
+                        logger.info("Stopped all Meshtastic threads.")
+                    except TimeoutError:
+                        logger.warning("Timeout while stopping Meshtastic threads. Forcing connection close.")
                 self.interface.close()
                 logger.info("Persistent connection closed.")
         except Exception as e:
             logger.error(f"Error closing connection: {e}")
+        finally:
+            self.interface = None
 
     def send_chunk(self, message: str, chunk_index: int, total_chunks: int) -> int:
+        """
+        Sends a single chunk (optionally prepended with a generated header) with retries.
+        
+        Returns the number of retries performed on success.
+        """
+        if self.header_template:
+            header = self.generate_header(chunk_index, total_chunks)
+            full_message = header + message
+        else:
+            header = ""
+            full_message = message
+
         """
         Sends a single chunk (optionally prepended with a generated header) with retries.
         
@@ -327,6 +349,11 @@ class PersistentMeshtasticSender:
                 logger.info(f"Sent chunk {chunk_index}/{total_chunks} with header '{header}' "
                             f"(Attempt {attempt+1}/{self.max_retries}, {remaining} remaining)")
                 return attempt
+            except BrokenPipeError:
+                logger.warning(f"Broken pipe detected. Reconnecting... (Attempt {attempt+1}/{self.max_retries})")
+                self.close_connection()
+                time.sleep(2)  # Wait before reconnecting
+                self.open_connection()  # Reopen the connection
             except Exception as e:
                 attempt += 1
                 logger.warning(f"Retry {attempt}/{self.max_retries} for chunk {chunk_index} due to error: {e}")
@@ -499,6 +526,7 @@ def main():
             total_chunks, total_failures = sender.send_all_chunks()
         finally:
             sender.close_connection()
+            logger.info("Connection closed successfully.")
         end_time = time.time()
     elif args.mode == "file_transfer":
         if not args.file_path:
@@ -549,6 +577,7 @@ def main():
             total_chunks, total_failures = sender.send_all_chunks()
         finally:
             sender.close_connection()
+            logger.info("Connection closed successfully.")
         end_time = time.time()
 
     # Calculate elapsed time and print execution summary
