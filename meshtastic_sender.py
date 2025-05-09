@@ -29,7 +29,6 @@ It supports three primary modes of operation: image processing and transfer, and
   - `--file_path`: Path to the file to send (required for `file_transfer` mode).
   - `--chunk_size`: Maximum length of each chunk when sending (default: 200).
   - `--dest`: Destination Node ID for Meshtastic send (default: `!47a78d36`).
-  - `--ack`: Enables acknowledgment mode for sending.
   - `--max_retries`: Maximum number of retries per chunk (default: 10).
   - `--retry_delay`: Delay in seconds between retries (default: 1).
   - `--sleep_delay`: Sleep delay in seconds between sending chunks (default: 0.1).
@@ -42,7 +41,7 @@ It supports three primary modes of operation: image processing and transfer, and
   --- To process an image and then upload and send it ---
   python3 meshtastic_sender.py --mode all --header nc --upload \
     --quality 75 --resize 800x600 --remote_target "user@host:/remote/path" --ssh_key "/path/to/id_rsa" \
-    --chunk_size 180 --dest '!47a78d36' --connection tcp --tcp_host 192.168.1.100 --ack --sleep_delay 1
+    --chunk_size 180 --dest '!47a78d36' --connection tcp --tcp_host 192.168.1.100 --sleep_delay 1
 
   --- To run only the image processing pipeline and optionally upload ---
   python3 meshtastic_sender.py --mode process --quality 75 --resize 800x600 \
@@ -231,7 +230,7 @@ class PersistentMeshtasticSender:
     def __init__(self, file_path: Path, chunk_size: int, dest: str,
                  connection: str, max_retries: int = DEFAULT_MAX_RETRIES,
                  retry_delay: int = DEFAULT_RETRY_DELAY, header_template: str = None,
-                 use_ack: bool = False, sleep_delay: float = DEFAULT_SLEEP_DELAY,
+                 sleep_delay: float = DEFAULT_SLEEP_DELAY,
                  start_delay: float = 0.0):
         self.file_path = file_path
         self.chunk_size = chunk_size
@@ -240,7 +239,6 @@ class PersistentMeshtasticSender:
         self.max_retries = max_retries
         self.retry_delay = retry_delay
         self.header_template = header_template
-        self.use_ack = use_ack
         self.sleep_delay = sleep_delay
         self.start_delay = start_delay
         self.interface = None
@@ -325,7 +323,7 @@ class PersistentMeshtasticSender:
         while attempt < self.max_retries:
             try:
                 # Send the message
-                self.interface.sendText(full_message, self.dest, wantAck=self.use_ack)
+                self.interface.sendText(full_message, self.dest, wantAck=True)
                 remaining = total_chunks - chunk_index
                 logger.info(f"Sent chunk {chunk_index}/{total_chunks} with header '{header}' "
                             f"(Attempt {attempt+1}/{self.max_retries}, {remaining} remaining)")
@@ -351,7 +349,7 @@ class PersistentMeshtasticSender:
 
         logger.info(f"Sending initial message: {initial_message}")
         try:
-            self.interface.sendText(initial_message, self.dest, wantAck=self.use_ack)
+            self.interface.sendText(initial_message, self.dest, wantAck=True)
         except Exception as e:
             logger.error(f"Failed to send initial message: {e}")
             sys.exit(1)
@@ -395,13 +393,13 @@ def main():
         description="Meshtastic Sender: Process an image or send a file via a persistent Meshtastic connection."
     )
     parser.add_argument("--mode", choices=["image_transfer", "file_transfer"],
-                        required=True,
+                        default="image_transfer",
                         help="Mode to run: 'image_transfer' to process and send an image, "
                              "'file_transfer' to send a file")
     parser.add_argument("--header", type=str, default="nc",
                         help="Header template (use '#' as digit placeholders)")
     # Parameters for image processing:
-    parser.add_argument("--quality", type=int, default=75,
+    parser.add_argument("--quality", type=int, default=90,
                         help="JPEG quality factor for optimization")
     parser.add_argument("--resize", type=str, default="800x600",
                         help="Resize dimensions (e.g., 800x600)")
@@ -417,14 +415,12 @@ def main():
     parser.add_argument("--upload", action="store_true",
                         help="Upload the processed image file using rsync (requires --remote_target and --ssh_key)")
     # Parameters for sending pipeline:
-    parser.add_argument("--file_path", type=str,
+    parser.add_argument("--file_path", type=str, default="/var/log/cron.log",
                         help="Path to text file to send (required for 'file_transfer' mode)")
-    parser.add_argument("--chunk_size", type=int, default=200,
+    parser.add_argument("--chunk_size", type=int, default=180,
                         help="Maximum length of each chunk when sending")
     parser.add_argument("--dest", type=str, default="!47a78d36",
                        help="Destination Node ID for Meshtastic send (default: '!47a78d36')")
-    parser.add_argument("--ack", action="store_true",
-                        help="Enable ACK mode for sending")
     parser.add_argument("--max_retries", type=int, default=DEFAULT_MAX_RETRIES,
                         help="Maximum number of retries per chunk")
     parser.add_argument("--retry_delay", type=int, default=DEFAULT_RETRY_DELAY,
@@ -460,7 +456,6 @@ def main():
         ("Destination", args.dest),
         ("Connection", args.connection),
         ("TCP Host", args.tcp_host if args.connection == "tcp" else "N/A"),
-        ("ACK Mode", args.ack),
         ("Max Retries", args.max_retries),
         ("Retry Delay", args.retry_delay),
         ("Sleep Delay", args.sleep_delay),
@@ -495,7 +490,6 @@ def main():
             max_retries=args.max_retries,
             retry_delay=args.retry_delay,
             header_template=args.header,
-            use_ack=args.ack,
             sleep_delay=args.sleep_delay,
             start_delay=args.start_delay
         )
@@ -544,7 +538,6 @@ def main():
             max_retries=args.max_retries,
             retry_delay=args.retry_delay,
             header_template=args.header,
-            use_ack=args.ack,
             sleep_delay=args.sleep_delay,
             start_delay=args.start_delay
         )
