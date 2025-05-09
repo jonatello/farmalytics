@@ -103,7 +103,8 @@ def optimize_compress_zip_base64encode_jpg(
         resize="800x600",
         snapshot_url="http://localhost:8080/0/action/snapshot",
         output_file="base64_image.gz",
-        cleanup=False):
+        cleanup=False,
+        preview_image=False):  # Add preview_image as a parameter
     """
     Captures a snapshot, optimizes/resizes the JPEG, compresses it with Zopfli gzip,
     and Base64 encodes the compressed image into output_file.
@@ -140,7 +141,7 @@ def optimize_compress_zip_base64encode_jpg(
     shutil.copy2(source_snapshot, image_path)
 
     # Generate an ASCII preview of the image using jp2a
-    if args.preview_image:  # Check if the --preview_image parameter is set
+    if preview_image:  # Use the passed parameter instead of args.preview_image
         print(f"Generating ASCII preview of {image_path} ...")
         try:
             subprocess.run(["jp2a", "--width=80", image_path], check=True)
@@ -504,7 +505,8 @@ def main():
             resize=args.resize,
             snapshot_url="http://localhost:8080/0/action/snapshot",
             output_file=args.output,
-            cleanup=args.cleanup
+            cleanup=args.cleanup,
+            preview_image=args.preview_image  # Pass the preview_image parameter
         )
         if args.upload:
             print("Uploading processed image file...")
