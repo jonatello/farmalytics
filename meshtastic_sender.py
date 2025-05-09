@@ -22,6 +22,7 @@ It supports three primary modes of operation: image processing and transfer, and
   - `--quality`: JPEG quality factor for optimization (default: 90, used in `image_transfer` mode).
   - `--resize`: Resize dimensions for the image (e.g., `800x600`, used in `image_transfer` mode).
   - `--output`: Output file for the processed image or file (default: `base64_image.gz`).
+  - `--preview_image`: Generates an ASCII preview of the image using `jp2a` (default: off).
   - `--cleanup`: Enables cleanup of intermediate files after processing (used in `image_transfer` mode).
   - `--remote_target`: Remote path for file upload (required if `--upload` is set).
   - `--ssh_key`: SSH identity file for rsync (required if `--upload` is set).
@@ -139,13 +140,14 @@ def optimize_compress_zip_base64encode_jpg(
     shutil.copy2(source_snapshot, image_path)
 
     # Generate an ASCII preview of the image using jp2a
-    print(f"Generating ASCII preview of {image_path} ...")
-    try:
-        subprocess.run(["jp2a", "--width=80", image_path], check=True)
-    except FileNotFoundError:
-        print("Error: jp2a is not installed or not found in the system PATH.")
-    except subprocess.CalledProcessError as e:
-        print(f"Error generating ASCII preview: {e}")
+    if args.preview_image:  # Check if the --preview_image parameter is set
+        print(f"Generating ASCII preview of {image_path} ...")
+        try:
+            subprocess.run(["jp2a", "--width=80", image_path], check=True)
+        except FileNotFoundError:
+            print("Error: jp2a is not installed or not found in the system PATH.")
+        except subprocess.CalledProcessError as e:
+            print(f"Error generating ASCII preview: {e}")
     
     # Execute cleanup logic only if the cleanup flag is set
     if cleanup:
@@ -433,6 +435,8 @@ def main():
                         help="Output file from image processing")
     parser.add_argument("--cleanup", action="store_true",
                         help="Enable cleanup of intermediate files after processing (default: off)")
+    parser.add_argument("--preview_image", action="store_true",
+                    help="Generate an ASCII preview of the image using jp2a (default: off)")
     # Upload parameters (only required if --upload is set)
     parser.add_argument("--remote_target", type=str,
                         help="Remote path for file upload (required if --upload is set)")
@@ -476,6 +480,7 @@ def main():
         ("Header", args.header),
         ("Quality", args.quality),
         ("Resize", args.resize),
+        ("ASCII Preview", args.preview_image),
         ("Output", args.output),
         ("File Path", args.file_path if args.file_path else args.output),
         ("Chunk Size", args.chunk_size),
