@@ -1,0 +1,14 @@
+[Unit]
+Description=Meshtastic Bot Service
+After=network.target
+
+[Service]
+ExecStart=/bin/bash -c "source /home/pi/meshtastic/bin/activate && python3 /path/to/meshtastic_bot.py"
+WorkingDirectory=/home/pi
+Restart=always
+User=pi
+Group=pi
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
