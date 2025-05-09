@@ -445,7 +445,7 @@ def main():
                         help="Delay in seconds between retries")
     parser.add_argument("--sleep_delay", type=float, default=DEFAULT_SLEEP_DELAY,
                         help="Sleep delay in seconds between sending chunks")
-    parser.add_argument("--start_delay", type=float, default=0.0,
+    parser.add_argument("--start_delay", type=float, default=30.0,
                         help="Delay in seconds after sending the initial receiver message but before sending chunks")
     parser.add_argument("--debug", action="store_true",
                         help="Enable debug mode for detailed logging")
