@@ -18,7 +18,7 @@ It supports receiving and reconstructing data sent in chunks, including images, 
    - Automatically stops listening after a specified period of inactivity.
 
 ### Parameters:
-  - `--output`: Path to save the reconstructed file or message.
+  - `--output`: Path to save the reconstructed file or message (default: restored.jpg).
   - `--remote_target`: Remote path for file upload (required if `--upload` is set).
   - `--ssh_key`: SSH identity file for rsync (required if `--upload` is set).
   - `--upload`: Enables uploading of the reconstructed file using rsync.
