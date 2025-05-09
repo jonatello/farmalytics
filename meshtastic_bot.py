@@ -8,7 +8,7 @@ It listens for incoming messages and performs actions based on specific commands
 ### Purpose:
 1. **Command Handling**:
    - Listens for incoming messages over the Meshtastic network.
-   - Responds to specific commands such as "hi!", "sysinfo!", "help!", and "ping!".
+   - Responds to specific commands such as "hi!", "sysinfo!", "help!", "ping!", "restart!", and "reboot!".
    - Supports sending and receiving using query-string parameters.
 
 2. **Persistent Connection**:
@@ -20,19 +20,21 @@ It listens for incoming messages and performs actions based on specific commands
 ### Parameters:
   - `--connection`: Connection mode (`tcp` or `serial`, default: `tcp`).
   - `--tcp_host`: TCP host for Meshtastic connection (default: `localhost`, used only in `tcp` mode).
-  - `--node_id`: Filter messages by sender node ID (default: `None`).
   - `--debug`: Enables debug mode for detailed logging.
 
 ### Commands:
   - `hi!`: Replies with "well hai!".
-  - `sysinfo!`: Sends consolidated system info (CPU, memory, disk, IP, and time).
+  - `sysinfo!`: Sends consolidated system info (CPU, memory, disk, IP, time, and uptime).
   - `help!`: Shows available commands (line-by-line).
-  - `ping!`: Replies with "pong!".
+  - `ping!`: Replies with "pong!" and includes SNR and RSSI values.
+  - `restart!`: Restarts the Meshtastic bot service.
+  - `reboot!`: Reboots the operating system.
   - `send!<query>`: Sends messages with meshtastic_sender.py using query-string parameters.
+  - `receive!<query>`: Receives messages with meshtastic_receiver.py using query-string parameters.
 
 ### Usage Examples:
   --- Start the bot and listen for messages ---
-  python3 meshtastic_bot.py --connection tcp --tcp_host localhost --node_id eb314389
+  python3 meshtastic_bot.py --connection tcp --tcp_host localhost
 
   --- Enable debug mode ---
   python3 meshtastic_bot.py --debug
@@ -134,8 +136,16 @@ def get_consolidated_sysinfo():
         now = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
         time_info = f"Current Time: {now}"
 
+        # Uptime
+        with open("/proc/uptime", "r") as f:
+            uptime_seconds = float(f.readline().split()[0])
+        uptime_days = int(uptime_seconds // (24 * 3600))
+        uptime_hours = int((uptime_seconds % (24 * 3600)) // 3600)
+        uptime_minutes = int((uptime_seconds % 3600) // 60)
+        uptime_info = f"Uptime: {uptime_days}d {uptime_hours}h {uptime_minutes}m"
+
         # Consolidated info
-        return f"{cpu_info}\n{mem_info}\n{disk_info}\n{ip_info}\n{time_info}"
+        return f"{cpu_info}\n{mem_info}\n{disk_info}\n{ip_info}\n{time_info}\n{uptime_info}"
     except Exception as e:
         return f"Error retrieving system info: {e}"
 
@@ -206,10 +216,6 @@ class MeshtasticBot:
         global logger
         try:
             sender = packet.get("fromId", "")
-            if self.args.node_id and sender.lstrip("!") != self.args.node_id:
-                logger.info("Ignoring message from node %s (expected %s).", sender, self.args.node_id)
-                return
-
             text = ""
             if "decoded" in packet:
                 text = packet["decoded"].get("text", "")
@@ -259,6 +265,24 @@ class MeshtasticBot:
 
                     # Send the response
                     self.interface.sendText(response_message, wantAck=True)
+                return
+            
+            if text == "restart!":
+                logger.info("Received 'restart!' command; restarting the service")
+                try:
+                    subprocess.run(["sudo", "systemctl", "restart", "meshtastic_bot.service"], check=True)
+                    logger.info("Service restarted successfully.")
+                except subprocess.CalledProcessError as e:
+                    logger.error(f"Failed to restart the service: {e}")
+                return
+            
+            if text == "reboot!":
+                logger.info("Received 'reboot!' command; rebooting the system")
+                try:
+                    subprocess.run(["sudo", "reboot"], check=True)
+                    logger.info("System reboot initiated successfully.")
+                except subprocess.CalledProcessError as e:
+                    logger.error(f"Failed to reboot the system: {e}")
                 return
 
             if text.startswith("send!"):
@@ -412,8 +436,6 @@ def main():
                         help="Connection mode: 'tcp' or 'serial' (default: tcp)")
     parser.add_argument("--tcp_host", type=str, default="localhost",
                         help="TCP host for Meshtastic connection (default: localhost, used only in TCP mode)")
-    parser.add_argument("--node_id", type=str, default=None,
-                        help="Filter messages by sender node ID (default: None).")
     parser.add_argument("--debug", action="store_true",
                         help="Enable debug mode for detailed logging.")
     args = parser.parse_args()
