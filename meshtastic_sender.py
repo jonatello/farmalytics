@@ -331,18 +331,6 @@ class PersistentMeshtasticSender:
             header = ""
             full_message = message
 
-        """
-        Sends a single chunk (optionally prepended with a generated header) with retries.
-        
-        Returns the number of retries performed on success.
-        """
-        if self.header_template:
-            header = self.generate_header(chunk_index, total_chunks)
-            full_message = header + message
-        else:
-            header = ""
-            full_message = message
-
         attempt = 0
         while attempt < self.max_retries:
             try:
@@ -366,15 +354,9 @@ class PersistentMeshtasticSender:
                     sys.exit(1)
         return attempt
 
-    def send_initial_message(self, total_chunks: int):
-        """
-        Sends an initial message with the header "messagecount!" followed by the maximum header value.
-        """
-        if self.header_template:
-            max_header = self.generate_header(total_chunks, total_chunks)
-            initial_message = f"messagecount!{max_header}"
-        else:
-            initial_message = f"messagecount!{total_chunks}"
+    def send_receiver_message(self, total_chunks: int):
+        """Sends an initial message with the header "receive!" followed by the receiver parameters."""
+        initial_message = f"receive!upload&expected={total_chunks}&header={header}"
 
         logger.info(f"Sending initial message: {initial_message}")
         try:
@@ -391,7 +373,7 @@ class PersistentMeshtasticSender:
         logger.info(f"Total chunks to send: {total_chunks}")
 
         # Send the initial message with the maximum header value
-        self.send_initial_message(total_chunks)
+        self.send_receiver_message(total_chunks)
 
         # Sleep for the specified start delay
         if self.start_delay > 0:
@@ -459,7 +441,7 @@ def main():
     parser.add_argument("--sleep_delay", type=float, default=DEFAULT_SLEEP_DELAY,
                         help="Sleep delay in seconds between sending chunks")
     parser.add_argument("--start_delay", type=float, default=0.0,
-                        help="Delay in seconds after sending the initial message but before sending chunks")
+                        help="Delay in seconds after sending the initial receiver message but before sending chunks")
     parser.add_argument("--debug", action="store_true",
                         help="Enable debug mode for detailed logging")
     parser.add_argument("--connection", type=str, choices=["tcp", "serial"], default="tcp",
