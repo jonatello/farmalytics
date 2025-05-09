@@ -9,7 +9,7 @@ It listens for incoming messages and performs actions based on specific commands
 1. **Command Handling**:
    - Listens for incoming messages over the Meshtastic network.
    - Responds to specific commands such as "hi!", "sysinfo!", "help!", and "ping!".
-   - Supports sending images using query-string parameters.
+   - Supports sending and receiving using query-string parameters.
 
 2. **Persistent Connection**:
    - Maintains a persistent TCP or Serial connection to the Meshtastic device.
@@ -20,7 +20,6 @@ It listens for incoming messages and performs actions based on specific commands
 ### Parameters:
   - `--connection`: Connection mode (`tcp` or `serial`, default: `tcp`).
   - `--tcp_host`: TCP host for Meshtastic connection (default: `localhost`, used only in `tcp` mode).
-  - `--channel_index`: Filter messages by channel index (default: `0`). Use `-1` to disable filtering.
   - `--node_id`: Filter messages by sender node ID (default: `None`).
   - `--debug`: Enables debug mode for detailed logging.
 
@@ -29,11 +28,11 @@ It listens for incoming messages and performs actions based on specific commands
   - `sysinfo!`: Sends consolidated system info (CPU, memory, disk, IP, and time).
   - `help!`: Shows available commands (line-by-line).
   - `ping!`: Replies with "pong!".
-  - `sendimage!<query>`: Sends an image using query-string parameters.
+  - `send!<query>`: Sends messages with meshtastic_sender.py using query-string parameters.
 
 ### Usage Examples:
   --- Start the bot and listen for messages ---
-  python3 meshtastic_bot.py --connection tcp --tcp_host localhost --channel_index 0 --node_id eb314389
+  python3 meshtastic_bot.py --connection tcp --tcp_host localhost --node_id eb314389
 
   --- Enable debug mode ---
   python3 meshtastic_bot.py --debug
@@ -148,12 +147,8 @@ def get_help_text():
         "  sysinfo!          - Consolidated system info (CPU, memory, disk, IP, and time)\n"
         "  help!             - Show this help message (line-by-line)\n"
         "  ping!             - Replies with pong!\n"
-        "  sendimage!<query> - Sends an image using query-string parameters\n"
-        "                      For example:\n"
-        "                      sendimage!dest=47a78d36&header=nc&chunk_size=180&resize=800x600&quality=75\n"
-        "  receiveimage!<query> - Receives an image using query-string parameters\n"
-        "                      For example:\n"
-        "                      receiveimage!output=myImage.jpg\n"
+        "  send!<query>      - Sends messages with meshtastic_sender.py using query-string parameters\n"
+        "  receive!<query>   - Receives messages with meshtastic_sender.py using query-string parameters\n"
     )
 
 # ---------------------- Bot Class ----------------------
@@ -186,6 +181,24 @@ class MeshtasticBot:
             logger.error("Error establishing connection: %s", e)
             sys.exit(1)
 
+    def close_connection(self):
+        """Closes the persistent Meshtastic connection."""
+        try:
+            if self.interface:
+                logger.info("Stopping Meshtastic threads...")
+                if hasattr(self.interface, "stop"):
+                    try:
+                        self.interface.stop()  # Attempt to stop all threads
+                        logger.info("Stopped all Meshtastic threads.")
+                    except TimeoutError:
+                        logger.warning("Timeout while stopping Meshtastic threads. Forcing connection close.")
+                self.interface.close()
+                logger.info("Persistent connection closed.")
+        except Exception as e:
+            logger.error(f"Error closing connection: {e}")
+        finally:
+            self.interface = None
+
     def on_receive(self, packet, interface=None):
         """
         Handles incoming messages and executes commands based on the message content.
@@ -196,16 +209,6 @@ class MeshtasticBot:
             if self.args.node_id and sender.lstrip("!") != self.args.node_id:
                 logger.info("Ignoring message from node %s (expected %s).", sender, self.args.node_id)
                 return
-
-            if self.args.channel_index is not None:
-                packet_channel = packet.get("channel") or packet.get("ch_index")
-                if packet_channel is not None:
-                    try:
-                        if int(packet_channel) != self.args.channel_index:
-                            logger.info("Ignoring message from channel %s (expected %s).", packet_channel, self.args.channel_index)
-                            return
-                    except Exception as e:
-                        logger.warning("Channel filtering error: %s", e)
 
             text = ""
             if "decoded" in packet:
@@ -258,58 +261,101 @@ class MeshtasticBot:
                     self.interface.sendText(response_message, wantAck=True)
                 return
 
-            # Handle the sendimage! command using query-string style.
-            if text.startswith("sendimage!"):
-                qs_string = text[len("sendimage!"):].strip()
-                # If no "=" is present, assume the entire string is the header.
+            if text.startswith("send!"):
+                qs_string = text[len("send!"):].strip()
                 if "=" not in qs_string:
                     qs_string = f"header={qs_string}"
                 params = parse_qs(qs_string)
-                cmd_args = build_sender_command(params)
-                cmd = ["python3", SENDER_SCRIPT] + cmd_args
-                logger.info("Received 'sendimage!' command. Running: %s", " ".join(cmd))
+                cmd = ["python3"] + build_command(params, SENDER_SCRIPT)
+                logger.info("Received 'send!' command. Running: %s", " ".join(cmd))
+                
                 if self.interface:
                     try:
                         self.interface.close()
-                        logger.info("Closed Meshtastic interface for sendimage!")
+                        logger.info("Closed Meshtastic interface for send!")
                     except Exception as e:
                         logger.error("Error closing interface: %s", e)
                     self.interface = None
+
                 time.sleep(5)
+
                 try:
-                    result = subprocess.run(cmd, shell=False, check=True,
-                                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                            universal_newlines=True)
-                    logger.info("meshtastic_sender.py output: %s", result.stdout)
-                except subprocess.CalledProcessError as e:
-                    logger.error("Error executing sendimage! command: %s", e)
+                    # Use subprocess.Popen for real-time logging
+                    process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                    try:
+                        # Stream stdout and stderr in real-time
+                        for line in process.stdout:
+                            logger.info(line.strip())
+                        for line in process.stderr:
+                            logger.error(line.strip())
+                    finally:
+                        # Ensure the process streams are closed
+                        process.stdout.close()
+                        process.stderr.close()
+
+                    # Wait for the process to complete
+                    return_code = process.wait()
+                    if return_code != 0:
+                        logger.error(f"Sender script exited with non-zero status: {return_code}")
+                    else:
+                        logger.info("Sender script completed successfully.")
+                    return
+                except Exception as e:
+                    logger.error(f"Error executing send! command: {e}")
+                finally:
+                    # Ensure the bot can continue running after the command
+                    logger.info("Returning to bot after send! command.")
+                    self.close_connection()  # Ensure the interface is fully closed
+                    time.sleep(2)  # Add a short delay before reconnecting
                 return
 
-            # Handle the receiveimage! command using query-string style.
-            if text.startswith("receiveimage!"):
-                qs_string = text[len("receiveimage!"):].strip()
+            if text.startswith("receive!"):
+                qs_string = text[len("receive!"):].strip()
                 # If no "=" is present, assume the entire string is the output file.
                 if "=" not in qs_string:
                     qs_string = f"output={qs_string}"
                 params = parse_qs(qs_string)
-                cmd_args = build_receiver_command(params)
-                cmd = ["python3", RECEIVER_SCRIPT] + cmd_args
-                logger.info("Received 'receiveimage!' command. Running: %s", " ".join(cmd))
+                cmd = ["python3"] + build_command(params, RECEIVER_SCRIPT)
+                logger.info("Received 'receive!' command. Running: %s", " ".join(cmd))
+                
                 if self.interface:
                     try:
                         self.interface.close()
-                        logger.info("Closed Meshtastic interface for receiveimage!")
+                        logger.info("Closed Meshtastic interface for receive!")
                     except Exception as e:
                         logger.error("Error closing interface: %s", e)
                     self.interface = None
+
                 time.sleep(5)
+
                 try:
-                    result = subprocess.run(cmd, shell=False, check=True,
-                                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                            universal_newlines=True)
-                    logger.info("meshtastic_receiver.py output: %s", result.stdout)
-                except subprocess.CalledProcessError as e:
-                    logger.error("Error executing receiveimage! command: %s", e)
+                    # Use subprocess.Popen for real-time logging
+                    process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                    try:
+                        # Stream stdout and stderr in real-time
+                        for line in process.stdout:
+                            logger.info(line.strip())
+                        for line in process.stderr:
+                            logger.error(line.strip())
+                    finally:
+                        # Ensure the process streams are closed
+                        process.stdout.close()
+                        process.stderr.close()
+
+                    # Wait for the process to complete
+                    return_code = process.wait()
+                    if return_code != 0:
+                        logger.error(f"Receiver script exited with non-zero status: {return_code}")
+                    else:
+                        logger.info("Receiver script completed successfully.")
+                    return
+                except Exception as e:
+                    logger.error(f"Error executing receive! command: {e}")
+                finally:
+                    # Ensure the bot can continue running after the command
+                    logger.info("Returning to bot after receive! command.")
+                    self.close_connection()  # Ensure the interface is fully closed
+                    time.sleep(2)  # Add a short delay before reconnecting
                 return
 
             logger.info("No matching command for message: %s", text)
@@ -322,10 +368,6 @@ class MeshtasticBot:
         """
         global logger
         self.connect()
-        if self.args.channel_index is not None:
-            logger.info("Listening for messages on channel %s...", self.args.channel_index)
-        else:
-            logger.info("Listening for messages on all channels...")
         try:
             while True:
                 if self.interface is None:
@@ -343,17 +385,18 @@ class MeshtasticBot:
                     logger.error("Error closing Meshtastic interface: %s", e)
 
 # ---------------------- Helper Functions ----------------------
-def build_receiver_command(params):
+def build_command(params, script):
     """
-    Builds the command-line arguments for the meshtastic_receiver.py script based on query-string parameters.
+    Builds the command-line arguments for a given script based on query-string parameters.
 
     Args:
-      params (dict): Parsed query-string parameters.
+    params (dict): Parsed query-string parameters.
+    script (str): The script to execute (e.g., SENDER_SCRIPT or RECEIVER_SCRIPT).
 
     Returns:
-      list: List of command-line arguments.
+    list: List of command-line arguments including the script name.
     """
-    args = []
+    args = [script]
     for key, value in params.items():
         if len(value) > 0:
             args.append(f"--{key}")
@@ -369,8 +412,6 @@ def main():
                         help="Connection mode: 'tcp' or 'serial' (default: tcp)")
     parser.add_argument("--tcp_host", type=str, default="localhost",
                         help="TCP host for Meshtastic connection (default: localhost, used only in TCP mode)")
-    parser.add_argument("--channel_index", type=int, default=0,
-                        help="Filter messages by channel index (default: 0). Use -1 to disable filtering.")
     parser.add_argument("--node_id", type=str, default=None,
                         help="Filter messages by sender node ID (default: None).")
     parser.add_argument("--debug", action="store_true",
@@ -379,9 +420,6 @@ def main():
 
     if args.connection == "tcp" and not args.tcp_host:
         parser.error("--tcp_host is required when connection mode is 'tcp'.")
-
-    if args.channel_index == -1:
-        args.channel_index = None
 
     global logger
     logger = configure_logging(args.debug)
