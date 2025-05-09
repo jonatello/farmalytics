@@ -376,9 +376,9 @@ def main():
     parser = argparse.ArgumentParser(
         description="Meshtastic Receiver with Asynchronous Processing and Robust Error Handling"
     )
-    parser.add_argument("--run_time", type=int, required=True, help="Run time in minutes.")
-    parser.add_argument("--sender", required=True, help="Sender node ID to filter messages from.")
-    parser.add_argument("--header", type=str, default="pn", help="Expected message header prefix (before '!').")
+    parser.add_argument("--run_time", type=int, default=60, help="Run time in minutes.")
+    parser.add_argument("--sender", default='eb314389', help="Sender node ID to filter messages from.")
+    parser.add_argument("--header", type=str, default="nc", help="Expected message header prefix (before '!').")
     parser.add_argument("--output", type=str, default="restored.jpg", help="Output file.")
     parser.add_argument("--remote_target", type=str, required=True, help="Remote path for file upload.")
     parser.add_argument("--ssh_key", type=str, required=True, help="SSH identity file for rsync.")
