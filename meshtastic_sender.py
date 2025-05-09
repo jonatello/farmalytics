@@ -356,6 +356,11 @@ class PersistentMeshtasticSender:
 
     def send_receiver_message(self, total_chunks: int):
         """Sends an initial message with the header "receive!" followed by the receiver parameters."""
+        if self.header_template:
+            header = self.header_template
+        else:
+            header = ""
+
         initial_message = f"receive!upload&expected={total_chunks}&header={header}"
 
         logger.info(f"Sending initial message: {initial_message}")
