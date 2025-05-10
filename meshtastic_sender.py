@@ -400,6 +400,15 @@ class PersistentMeshtasticSender:
         logger.info("All chunks sent successfully.")
         return total_chunks, total_failures
 
+    def send_message(self, message: str):
+        """Send a single message."""
+        try:
+            self.interface.sendText(message, self.dest, wantAck=True)
+            logger.info(f"Message sent to {self.dest}: {message}")
+        except Exception as e:
+            logger.error(f"Failed to send message: {e}")
+            sys.exit(1)
+
 # --------- Signal Handling for Sending ----------
 def setup_signal_handlers(sender):
     def handler(sig, frame):
@@ -414,10 +423,10 @@ def main():
     parser = argparse.ArgumentParser(
         description="Meshtastic Sender: Process an image or send a file via a persistent Meshtastic connection."
     )
-    parser.add_argument("--mode", choices=["image_transfer", "file_transfer"],
-                        default="image_transfer",
+    parser.add_argument("--mode", choices=["image_transfer", "file_transfer", "message"], default="message",
                         help="Mode to run: 'image_transfer' to process and send an image, "
-                             "'file_transfer' to send a file")
+                             "'file_transfer' to send a file, 'message' to send a single message.")
+    parser.add_argument("--message", type=str, help="Message to send (required for 'message' mode).")
     parser.add_argument("--header", type=str, default="nc",
                         help="Header template (use '#' as digit placeholders)")
     # Parameters for image processing:
@@ -468,7 +477,7 @@ def main():
 
     configure_logging(args.debug)
 
-    # --------- Display Sender Parameters in an ASCII Table ---------
+    # Display Sender Parameters in an ASCII Table
     param_items = [
         ("Mode", args.mode),
         ("Header", args.header),
@@ -491,115 +500,153 @@ def main():
     ]
     print_table("Sender Parameters", param_items)
 
-    if args.mode == "image_transfer":
-        print("Running image processing pipeline...")
-        summary = optimize_compress_zip_base64encode_jpg(
-            quality=args.quality,
-            resize=args.resize,
-            snapshot_url="http://localhost:8080/0/action/snapshot",
-            output_file=args.output,
-            cleanup=args.cleanup,
-            preview_image=args.preview_image  # Pass the preview_image parameter
-        )
-        if args.upload:
-            print("Uploading processed image file...")
-            upload_file(args.output, args.remote_target, args.ssh_key)
-        # Default file_path to the processing output if not provided.
-        if not args.file_path:
-            args.file_path = args.output
-        file_path = Path(args.file_path)
-        with PersistentMeshtasticSender(
-            file_path=file_path,
-            chunk_size=args.chunk_size,
-            dest=args.dest,
-            connection=args.connection,
-            max_retries=args.max_retries,
-            retry_delay=args.retry_delay,
-            header_template=args.header,
-            sleep_delay=args.sleep_delay,
-            start_delay=args.start_delay
-        ) as sender:
-            setup_signal_handlers(sender)
-            start_time = time.time()
-            try:
-                total_chunks, total_failures = sender.send_all_chunks()
-            finally:
-                sender.close_connection()
-                logger.info("Connection closed successfully.")
-            end_time = time.time()
-    elif args.mode == "file_transfer":
-        if not args.file_path:
-            logger.error("For file_transfer mode, --file_path is required.")
-            sys.exit(1)
+    # Initialize variables for execution summary
+    total_chunks = 0
+    total_failures = 0
+    start_time = time.time()
+    end_time = None
 
-        print("Running file processing pipeline...")
-        compressed_file = "compressed_file.gz"
-        print(f"Compressing file using Zopfli gzip ...")
-        with open(args.file_path, "rb") as f_in:
-            data = f_in.read()
-        compressed_data = zopfli.gzip.compress(data)
-        with open(compressed_file, "wb") as f_out:
-            f_out.write(compressed_data)
-        zipped_size = os.stat(compressed_file).st_size
-        print(f"Size after compression: {zipped_size} bytes")
-        
-        print("Encoding compressed image to Base64 ...")
-        base64_encoded_file = "base64_encoded_file.gz"
-        with open(compressed_file, "rb") as f_in:
-            zipped_content = f_in.read()
-        base64_encoded = base64.b64encode(zipped_content)
-        with open(base64_encoded_file, "wb") as f_out:
-            f_out.write(base64_encoded)
-        base64_size = os.stat(base64_encoded_file).st_size
-        print(f"Size after Base64 encoding: {base64_size} bytes")
-
-        if args.upload:
-            print("Uploading processed file...")
-            upload_file(base64_encoded_file, args.remote_target, args.ssh_key)
-
-        file_path = Path(base64_encoded_file)
-        with PersistentMeshtasticSender(
-            file_path=file_path,
-            chunk_size=args.chunk_size,
-            dest=args.dest,
-            connection=args.connection,
-            max_retries=args.max_retries,
-            retry_delay=args.retry_delay,
-            header_template=args.header,
-            sleep_delay=args.sleep_delay,
-            start_delay=args.start_delay
-        ) as sender:
-            setup_signal_handlers(sender)
-            start_time = time.time()
-            try:
-                total_chunks, total_failures = sender.send_all_chunks()
-            finally:
-                sender.close_connection()
-                logger.info("Connection closed successfully.")
+    try:
+        if args.mode == "image_transfer":
+            print("Running image processing pipeline...")
+            summary = optimize_compress_zip_base64encode_jpg(
+                quality=args.quality,
+                resize=args.resize,
+                snapshot_url="http://localhost:8080/0/action/snapshot",
+                output_file=args.output,
+                cleanup=args.cleanup,
+                preview_image=args.preview_image
+            )
+            if args.upload:
+                print("Uploading processed image file...")
+                upload_file(args.output, args.remote_target, args.ssh_key)
+            if not args.file_path:
+                args.file_path = args.output
+            file_path = Path(args.file_path)
+            with PersistentMeshtasticSender(
+                file_path=file_path,
+                chunk_size=args.chunk_size,
+                dest=args.dest,
+                connection=args.connection,
+                max_retries=args.max_retries,
+                retry_delay=args.retry_delay,
+                header_template=args.header,
+                sleep_delay=args.sleep_delay,
+                start_delay=args.start_delay
+            ) as sender:
+                setup_signal_handlers(sender)
+                try:
+                    total_chunks, total_failures = sender.send_all_chunks()
+                finally:
+                    sender.close_connection()
+                    logger.info("Connection closed successfully.")
             end_time = time.time()
 
-    # Calculate elapsed time and print execution summary
-    elapsed_seconds = end_time - start_time
-    formatted_elapsed = time.strftime("%H:%M:%S", time.gmtime(elapsed_seconds))
+        elif args.mode == "file_transfer":
+            if not args.file_path:
+                logger.error("For file_transfer mode, --file_path is required.")
+                sys.exit(1)
 
-    # Calculate total size of data sent
-    if args.mode in ["image_transfer", "file_transfer"]:
-        total_size = total_chunks * args.chunk_size  # Approximation based on chunk size
-    else:
-        total_size = 0  # Default to 0 if mode is unrecognized
+            print("Running file processing pipeline...")
+            compressed_file = "compressed_file.gz"
+            print(f"Compressing file using Zopfli gzip ...")
+            with open(args.file_path, "rb") as f_in:
+                data = f_in.read()
+            compressed_data = zopfli.gzip.compress(data)
+            with open(compressed_file, "wb") as f_out:
+                f_out.write(compressed_data)
 
-    # Calculate transmission speed
-    speed = total_size / elapsed_seconds if elapsed_seconds > 0 else 0
+            zipped_size = os.stat(compressed_file).st_size
+            print(f"Size after compression: {zipped_size} bytes")
 
-    exec_summary = [
-        ("Start Time", time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(start_time))),
-        ("End Time", time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(end_time))),
-        ("Time Elapsed", formatted_elapsed),
-        ("Total Chunks Sent", total_chunks),
-        ("Total Data Sent", f"{total_size} bytes"),
-        ("Transmission Speed", f"{speed:.2f} bytes/second")
-    ]
-    print_table("Execution Summary", exec_summary)
+            print("Encoding compressed file to Base64 ...")
+            base64_encoded_file = "base64_encoded_file.gz"
+            with open(compressed_file, "rb") as f_in:
+                zipped_content = f_in.read()
+            base64_encoded = base64.b64encode(zipped_content)
+            with open(base64_encoded_file, "wb") as f_out:
+                f_out.write(base64_encoded)
+
+            base64_size = os.stat(base64_encoded_file).st_size
+            print(f"Size after Base64 encoding: {base64_size} bytes")
+
+            if args.upload:
+                print("Uploading processed file...")
+                upload_file(base64_encoded_file, args.remote_target, args.ssh_key)
+
+            file_path = Path(base64_encoded_file)
+            with PersistentMeshtasticSender(
+                file_path=file_path,
+                chunk_size=args.chunk_size,
+                dest=args.dest,
+                connection=args.connection,
+                max_retries=args.max_retries,
+                retry_delay=args.retry_delay,
+                header_template=args.header,
+                sleep_delay=args.sleep_delay,
+                start_delay=args.start_delay
+            ) as sender:
+                setup_signal_handlers(sender)
+                try:
+                    total_chunks, total_failures = sender.send_all_chunks()
+                finally:
+                    sender.close_connection()
+                    logger.info("Connection closed successfully.")
+            end_time = time.time()
+
+        elif args.mode == "message":
+            if not args.message:
+                logger.error("For message mode, --message is required.")
+                sys.exit(1)
+
+            print("Sending a single message...")
+            with PersistentMeshtasticSender(
+                file_path=None,
+                chunk_size=0,
+                dest=args.dest,
+                connection=args.connection,
+                max_retries=args.max_retries,
+                retry_delay=args.retry_delay,
+                header_template=args.header,
+                sleep_delay=args.sleep_delay,
+                start_delay=args.start_delay
+            ) as sender:
+                setup_signal_handlers(sender)
+                try:
+                    sender.send_message(args.message)
+                finally:
+                    sender.close_connection()
+                    logger.info("Connection closed successfully.")
+            end_time = time.time()
+
+    except Exception as e:
+        logger.error(f"An error occurred: {e}")
+        sys.exit(1)
+
+    finally:
+        if end_time is None:
+            end_time = time.time()
+        elapsed_seconds = end_time - start_time
+        formatted_elapsed = time.strftime("%H:%M:%S", time.gmtime(elapsed_seconds))
+
+        # Calculate total size of data sent
+        if args.mode in ["image_transfer", "file_transfer"]:
+            total_size = total_chunks * args.chunk_size
+        else:
+            total_size = 0
+
+        # Calculate transmission speed
+        speed = total_size / elapsed_seconds if elapsed_seconds > 0 else 0
+
+        exec_summary = [
+            ("Start Time", time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(start_time))),
+            ("End Time", time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(end_time))),
+            ("Time Elapsed", formatted_elapsed),
+            ("Total Chunks Sent", total_chunks),
+            ("Total Data Sent", f"{total_size} bytes"),
+            ("Transmission Speed", f"{speed:.2f} bytes/second")
+        ]
+        print_table("Execution Summary", exec_summary)
 
 
 if __name__ == "__main__":
