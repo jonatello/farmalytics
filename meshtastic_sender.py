@@ -219,10 +219,6 @@ def upload_file(file_path: str, remote_target: str, ssh_key: str):
 from meshtastic.tcp_interface import TCPInterface
 from meshtastic.serial_interface import SerialInterface
 
-DEFAULT_MAX_RETRIES = 10
-DEFAULT_RETRY_DELAY = 1      # seconds
-DEFAULT_SLEEP_DELAY = 0.1    # seconds
-
 class PersistentMeshtasticSender:
     """
     Uses a persistent Meshtastic connection to send file content.
@@ -232,9 +228,9 @@ class PersistentMeshtasticSender:
     Includes retry logic and a delay between sends.
     """
     def __init__(self, file_path: Path, chunk_size: int, dest: str,
-                 connection: str, max_retries: int = DEFAULT_MAX_RETRIES,
-                 retry_delay: int = DEFAULT_RETRY_DELAY, header_template: str = None,
-                 sleep_delay: float = DEFAULT_SLEEP_DELAY, start_delay: float = 0.0):
+                 connection: str, max_retries: int = 10,
+                 retry_delay: int = 1.0, header_template: str = None,
+                 sleep_delay: float = 0.1, start_delay: float = 0.0):
         self.file_path = file_path
         self.chunk_size = chunk_size
         self.dest = dest
@@ -454,11 +450,11 @@ def main():
                         help="Maximum length of each chunk when sending")
     parser.add_argument("--dest", type=str, default="!47a78d36",
                        help="Destination Node ID for Meshtastic send (default: '!47a78d36')")
-    parser.add_argument("--max_retries", type=int, default=DEFAULT_MAX_RETRIES,
+    parser.add_argument("--max_retries", type=int, default=10,
                         help="Maximum number of retries per chunk")
-    parser.add_argument("--retry_delay", type=int, default=DEFAULT_RETRY_DELAY,
+    parser.add_argument("--retry_delay", type=int, default=1.0,
                         help="Delay in seconds between retries")
-    parser.add_argument("--sleep_delay", type=float, default=DEFAULT_SLEEP_DELAY,
+    parser.add_argument("--sleep_delay", type=float, default=0.1,
                         help="Sleep delay in seconds between sending chunks")
     parser.add_argument("--start_delay", type=float, default=30.0,
                         help="Delay in seconds after sending the initial receiver message but before sending chunks")
