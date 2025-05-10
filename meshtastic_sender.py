@@ -246,6 +246,15 @@ class PersistentMeshtasticSender:
         self.start_delay = start_delay
         self.interface = None
 
+    def __enter__(self):
+        """Context manager entry point: Open the connection."""
+        self.open_connection()
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        """Context manager exit point: Close the connection."""
+        self.close_connection()
+
     def read_file(self) -> str:
         try:
             return self.file_path.read_text()
@@ -281,24 +290,21 @@ class PersistentMeshtasticSender:
 
     def open_connection(self, tcp_host="localhost"):
         """Establishes a persistent Meshtastic connection (TCP or Serial)."""
-        if self.connection == 'tcp':
-            logger.info("Establishing persistent TCP connection...")
-            try:
+        try:
+            if self.connection == 'tcp':
+                logger.info("Establishing persistent TCP connection...")
                 self.interface = TCPInterface(hostname=tcp_host)
-            except Exception as e:
-                logger.error(f"Error establishing TCP connection: {e}")
-                sys.exit(1)
-        elif self.connection == 'serial':
-            logger.info("Establishing persistent Serial connection...")
-            try:
+            elif self.connection == 'serial':
+                logger.info("Establishing persistent Serial connection...")
                 self.interface = SerialInterface()
-            except Exception as e:
-                logger.error(f"Error establishing Serial connection: {e}")
+            else:
+                logger.error(f"Unknown connection type: {self.connection}")
                 sys.exit(1)
-        else:
-            logger.error(f"Unknown connection type: {self.connection}")
+            logger.info("Persistent connection established.")
+        except Exception as e:
+            logger.error(f"Error establishing connection: {e}")
+            self.close_connection()
             sys.exit(1)
-        logger.info("Persistent connection established.")
 
     def close_connection(self):
         """Closes the persistent Meshtastic connection."""
@@ -502,7 +508,7 @@ def main():
         if not args.file_path:
             args.file_path = args.output
         file_path = Path(args.file_path)
-        sender = PersistentMeshtasticSender(
+        with PersistentMeshtasticSender(
             file_path=file_path,
             chunk_size=args.chunk_size,
             dest=args.dest,
@@ -512,16 +518,15 @@ def main():
             header_template=args.header,
             sleep_delay=args.sleep_delay,
             start_delay=args.start_delay
-        )
-        setup_signal_handlers(sender)
-        start_time = time.time()
-        try:
-            sender.open_connection(tcp_host=args.tcp_host)
-            total_chunks, total_failures = sender.send_all_chunks()
-        finally:
-            sender.close_connection()
-            logger.info("Connection closed successfully.")
-        end_time = time.time()
+        ) as sender:
+            setup_signal_handlers(sender)
+            start_time = time.time()
+            try:
+                total_chunks, total_failures = sender.send_all_chunks()
+            finally:
+                sender.close_connection()
+                logger.info("Connection closed successfully.")
+            end_time = time.time()
     elif args.mode == "file_transfer":
         if not args.file_path:
             logger.error("For file_transfer mode, --file_path is required.")
@@ -553,7 +558,7 @@ def main():
             upload_file(base64_encoded_file, args.remote_target, args.ssh_key)
 
         file_path = Path(base64_encoded_file)
-        sender = PersistentMeshtasticSender(
+        with PersistentMeshtasticSender(
             file_path=file_path,
             chunk_size=args.chunk_size,
             dest=args.dest,
@@ -563,16 +568,15 @@ def main():
             header_template=args.header,
             sleep_delay=args.sleep_delay,
             start_delay=args.start_delay
-        )
-        setup_signal_handlers(sender)
-        start_time = time.time()
-        try:
-            sender.open_connection(tcp_host=args.tcp_host)
-            total_chunks, total_failures = sender.send_all_chunks()
-        finally:
-            sender.close_connection()
-            logger.info("Connection closed successfully.")
-        end_time = time.time()
+        ) as sender:
+            setup_signal_handlers(sender)
+            start_time = time.time()
+            try:
+                total_chunks, total_failures = sender.send_all_chunks()
+            finally:
+                sender.close_connection()
+                logger.info("Connection closed successfully.")
+            end_time = time.time()
 
     # Calculate elapsed time and print execution summary
     elapsed_seconds = end_time - start_time
