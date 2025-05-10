@@ -33,7 +33,7 @@ It supports three primary modes of operation: image processing and transfer, and
   - `--max_retries`: Maximum number of retries per chunk (default: 10).
   - `--retry_delay`: Delay in seconds between retries (default: 1).
   - `--sleep_delay`: Sleep delay in seconds between sending chunks (default: 0.1).
-  - `--start_delay`: Delay in seconds after sending the initial message but before sending chunks (default: 30.0).
+  - `--start_delay`: Delay in seconds after sending the initial message but before sending chunks (default: 0.0).
   - `--connection`: Connection mode (`tcp` or `serial`, default: `tcp`).
   - `--tcp_host`: TCP host for Meshtastic connection (default: `localhost`).
   - `--debug`: Enables debug mode for detailed logging.
