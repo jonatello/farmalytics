@@ -453,7 +453,7 @@ def main():
                         help="Mode to run: 'image_transfer' to process and send an image, "
                              "'file_transfer' to send a file, 'message' to send a single message.")
     parser.add_argument("-m","--message", type=str, help="Message to send (required for 'message' mode).")
-    parser.add_argument("-h","--header", type=str, default="nc",
+    parser.add_argument("-he","--header", type=str, default="nc",
                         help="Header template (use '#' as digit placeholders)")
     # Parameters for image processing:
     parser.add_argument("-q","--quality", type=int, default=90,
