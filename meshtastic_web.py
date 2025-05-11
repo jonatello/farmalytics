@@ -13,26 +13,11 @@ logger = logging.getLogger("MeshtasticWeb")
 
 # ASCII Art Header
 art = '''
-          .-------------------------------------------------.
-          |          Welcome to the FreeBSD Castle          |
-          |  Beware the horned daemon roaming these dark halls  |
-          '-------------------------------------------------'
-
-                      /\\          /\\         /\\
-                     /  \\        /  \\       /  \\
-                    /    \\      /    \\     /    \\
-                   /  ^   \\    /  ^   \\   /  ^   \\     <-- Horns galore!
-                  /  / \\   \\  /  / \\   \\ /  / \\   \\
-                 /  /   \\   \\/  /   \\   X  /   \\   \\
-                /__/_____\\____/_____\\____/_____\\___\\
-
-                           .-"""-.
-                          /       \\
-                         |  (o) (o) |
-                         |    ^    |
-                         |  \\___/  |
-                          \\_______/
-                 The Horned Beastie at your service!
+       ,--------------.
+      /  /~~~~~~~~~~\  \
+     |  |  (͡° ͜ʖ ͡°)   |   I'm up to no good!
+      \  \__________/  /
+       '--------------'
 '''
 
 print(art)
@@ -71,8 +56,8 @@ def send_message():
         cmd = [
             "python3",
             "meshtastic_sender.py",
-            "--mode", "file_transfer",
-            "--file_path", message,
+            "--mode", "message",
+            "--message", message,
             "--dest", destination,
         ]
         subprocess.run(cmd, check=True)
@@ -82,16 +67,25 @@ def send_message():
         return jsonify({"status": "error", "message": "Failed to send message."})
 
 
-@app.route("/restart", methods=["POST"])
+@app.route("/restartbot", methods=["POST"])
 def restart_service():
     """Restart the Meshtastic bot service."""
     try:
         subprocess.run(["sudo", "systemctl", "restart", "meshtastic_bot.service"], check=True)
-        return jsonify({"status": "success", "message": "Service restarted successfully!"})
+        return jsonify({"status": "success", "message": "Bot Service restarted successfully!"})
     except Exception as e:
-        logger.error(f"Error restarting service: {e}")
-        return jsonify({"status": "error", "message": "Failed to restart service."})
+        logger.error(f"Error restarting bot service: {e}")
+        return jsonify({"status": "error", "message": "Failed to restart bot service."})
 
+@app.route("/restartweb", methods=["POST"])
+def restart_service():
+    """Restart the Meshtastic web service."""
+    try:
+        subprocess.run(["sudo", "systemctl", "restart", "meshtastic_web.service"], check=True)
+        return jsonify({"status": "success", "message": "Web Service restarted successfully!"})
+    except Exception as e:
+        logger.error(f"Error restarting web service: {e}")
+        return jsonify({"status": "error", "message": "Failed to restart web service."})
 
 @app.route("/reboot", methods=["POST"])
 def reboot_system():
