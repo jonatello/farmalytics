@@ -93,9 +93,8 @@ def logs():
     """Serve the last 20 lines of the log file."""
     try:
         log_file_path = "/home/pi/debug_messages.log"
-        with open(log_file_path, "rb") as log_file:
+        with open(log_file_path, "r", encoding="utf-8", errors="replace") as log_file:
             log_lines = tailer.tail(log_file, 20)
-            log_lines = [line.decode("utf-8", errors="replace") for line in log_lines]
         return "<br>".join(log_lines)
     except Exception as e:
         logger.error(f"Error reading log file: {e}")
