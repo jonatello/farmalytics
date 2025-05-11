@@ -221,7 +221,7 @@ class MeshtasticBot:
                 text = packet["decoded"].get("text", "")
             else:
                 text = packet.get("text", "")
-            text = text.strip().lower()
+            text = text.strip()
             if not text:
                 logger.debug("No text in message from node %s.", sender)
                 return
