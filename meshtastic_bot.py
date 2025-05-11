@@ -322,16 +322,16 @@ class MeshtasticBot:
                 params = parse_qs(qs_string)
                 cmd = ["python3"] + build_command(params, SENDER_SCRIPT)
                 logger.info("Received 'send!' command. Running: %s", " ".join(cmd))
-                
+
+                # Close the Meshtastic connection before running the sender script
                 if self.interface:
                     try:
-                        self.interface.close()
+                        self.close_connection()
                         logger.info("Closed Meshtastic interface for send!")
                     except Exception as e:
                         logger.error("Error closing interface: %s", e)
-                    self.interface = None
 
-                time.sleep(5)
+                time.sleep(5)  # Add a short delay to ensure the connection is fully closed
 
                 try:
                     # Use subprocess.Popen for real-time logging
@@ -353,19 +353,16 @@ class MeshtasticBot:
                         logger.error(f"Sender script exited with non-zero status: {return_code}")
                     else:
                         logger.info("Sender script completed successfully.")
-                    return
                 except Exception as e:
                     logger.error(f"Error executing send! command: {e}")
                 finally:
-                    # Ensure the bot can continue running after the command
-                    logger.info("Returning to bot after send! command.")
-                    self.close_connection()  # Ensure the interface is fully closed
-                    time.sleep(2)  # Add a short delay before reconnecting
+                    # Re-establish the Meshtastic connection after the sender script completes
+                    logger.info("Re-establishing Meshtastic connection after send! command.")
+                    self.open_connection()
                 return
 
             if text.startswith("receive!"):
                 qs_string = text[len("receive!"):].strip()
-                # If no "=" is present, assume the entire string is the output file.
                 if "=" not in qs_string:
                     qs_string = f"output={qs_string}"
                 params = parse_qs(qs_string)
@@ -384,13 +381,12 @@ class MeshtasticBot:
 
                 if self.interface:
                     try:
-                        self.interface.close()
+                        self.close_connection()
                         logger.info("Closed Meshtastic interface for receive!")
                     except Exception as e:
                         logger.error("Error closing interface: %s", e)
-                    self.interface = None
 
-                time.sleep(5)
+                time.sleep(5) # Add a short delay to ensure the connection is fully closed
 
                 try:
                     # Use shlex.split to ensure proper argument handling
@@ -417,9 +413,8 @@ class MeshtasticBot:
                     logger.error(f"Error executing receive! command: {e}")
                 finally:
                     # Ensure the bot can continue running after the command
-                    logger.info("Returning to bot after receive! command.")
-                    self.close_connection()  # Ensure the interface is fully closed
-                    time.sleep(2)  # Add a short delay before reconnecting
+                    logger.info("Re-establishing Meshtastic connection after receive! command.")
+                    self.open_connection()
                 return
 
             logger.info("No matching command for message: %s", text)
