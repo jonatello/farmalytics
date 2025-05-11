@@ -429,8 +429,12 @@ class PersistentMeshtasticSender:
     def send_message(self, message: str):
         """Send a single message."""
         try:
-            self.interface.sendText(message, self.dest, wantAck=True)
-            logger.info(f"Message sent to {self.dest}: {message}")
+            if self.dest:  # Check if self.dest is not None or empty
+                self.interface.sendText(message, self.dest, wantAck=True)
+                logger.info(f"Message sent to {self.dest}: {message}")
+            else:
+                self.interface.sendText(message, wantAck=True)  # Omit the destination parameter
+                logger.info(f"Message sent without a specific destination: {message}")
         except Exception as e:
             logger.error(f"Failed to send message: {e}")
             sys.exit(1)
@@ -494,7 +498,7 @@ def main():
                         help="Connection mode: 'tcp' or 'serial'")
     parser.add_argument("-t","--tcp_host", type=str, default="localhost",
                         help="TCP host (default: localhost, used only in TCP mode)")
-    parser.add_argument("-rp","--receiver", type=str, default='{"sender": "eb314389"}',
+    parser.add_argument("-rp","--receiver", type=str, default='{"upload": true, "remote_target": "jonatello@192.168.2.4:/mnt/RaidZ/Master/Pictures/Motion/farmalytics3/", "ssh_key": "/home/pi/.ssh/id_rsa", "sender": "eb314389"}',
                         help="Receiver JSON object containing receiver-specific parameters")
     args = parser.parse_args()
 
