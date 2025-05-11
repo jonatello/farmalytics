@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, send_file
 import subprocess
 import os
 import logging
@@ -11,28 +11,17 @@ app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("MeshtasticWeb")
 
-# ASCII Art Header
-art = '''
-       ,--------------.
-      /  /~~~~~~~~~~\  \
-     |  |  (͡° ͜ʖ ͡°)   |   I'm up to no good!
-      \  \__________/  /
-       '--------------'
-'''
-
-print(art)
-
 # ---------------------- Routes ----------------------
 
 @app.route("/")
 def home():
-    """Homepage with ASCII art, status, and links."""
+    """Homepage with status and controls."""
     try:
         sysinfo = get_consolidated_sysinfo()
     except Exception as e:
         logger.error(f"Error fetching status: {e}")
         sysinfo = "Error fetching status."
-    return render_template("home.html", art=art, sysinfo=sysinfo)
+    return render_template("home.html", sysinfo=sysinfo)
 
 
 @app.route("/status")
@@ -52,7 +41,6 @@ def send_message():
     message = request.form.get("message")
     destination = request.form.get("destination", "broadcast")
     try:
-        # Example command to send a message using meshtastic_sender.py
         cmd = [
             "python3",
             "meshtastic_sender.py",
@@ -68,7 +56,7 @@ def send_message():
 
 
 @app.route("/restartbot", methods=["POST"])
-def restart_service():
+def restart_bot_service():
     """Restart the Meshtastic bot service."""
     try:
         subprocess.run(["sudo", "systemctl", "restart", "meshtastic_bot.service"], check=True)
@@ -77,8 +65,9 @@ def restart_service():
         logger.error(f"Error restarting bot service: {e}")
         return jsonify({"status": "error", "message": "Failed to restart bot service."})
 
+
 @app.route("/restartweb", methods=["POST"])
-def restart_service():
+def restart_web_service():
     """Restart the Meshtastic web service."""
     try:
         subprocess.run(["sudo", "systemctl", "restart", "meshtastic_web.service"], check=True)
@@ -86,6 +75,7 @@ def restart_service():
     except Exception as e:
         logger.error(f"Error restarting web service: {e}")
         return jsonify({"status": "error", "message": "Failed to restart web service."})
+
 
 @app.route("/reboot", methods=["POST"])
 def reboot_system():
@@ -102,13 +92,30 @@ def reboot_system():
 def logs():
     """Serve the last 20 lines of the log file."""
     try:
-        log_file_path = "/home/pi/debug_messages.log"  # Update this path if needed
-        with open(log_file_path, "r") as log_file:
-            log_lines = tailer.tail(log_file, 20)  # Get the last 20 lines
-        return "\n".join(log_lines)
+        log_file_path = "/home/pi/debug_messages.log"
+        with open(log_file_path, "rb") as log_file:
+            log_lines = tailer.tail(log_file, 20)
+            log_lines = [line.decode("utf-8", errors="replace") for line in log_lines]
+        return "<br>".join(log_lines)
     except Exception as e:
         logger.error(f"Error reading log file: {e}")
-        return "Error reading logs."
+        return jsonify({"status": "error", "message": "Error reading logs."})
+
+
+@app.route("/download_logs")
+def download_logs():
+    """Serve the entire debug_messages.log file as a downloadable attachment."""
+    try:
+        log_file_path = "/home/pi/debug_messages.log"
+        return send_file(
+            log_file_path,
+            as_attachment=True,
+            download_name="debug_messages.log",
+            mimetype="text/plain"
+        )
+    except Exception as e:
+        logger.error(f"Error serving log file for download: {e}")
+        return jsonify({"status": "error", "message": "Error downloading log file."})
 
 
 # ---------------------- Run the App ----------------------
