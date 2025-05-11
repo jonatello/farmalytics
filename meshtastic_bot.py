@@ -54,6 +54,7 @@ import os
 import shutil
 import socket
 from urllib.parse import parse_qs
+import shlex
 
 from meshtastic.tcp_interface import TCPInterface
 from meshtastic.serial_interface import SerialInterface
@@ -167,30 +168,47 @@ class MeshtasticBot:
     def __init__(self, args):
         global logger
         self.args = args
+        self.connection = args.connection  # Initialize the connection type (tcp or serial)
+        self.tcp_host = args.tcp_host  # Initialize the TCP host if needed
         self.interface = None
 
-    def connect(self):
-        """
-        Establishes a connection to the Meshtastic device using either TCP or Serial.
-        """
-        global logger
-        try:
-            if self.args.connection == "tcp":
-                logger.info("Establishing persistent TCP connection to %s...", self.args.tcp_host)
-                self.interface = TCPInterface(hostname=self.args.tcp_host)
+    def __enter__(self):
+        """Context manager entry point: Open the connection."""
+        self.open_connection()
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        """Context manager exit point: Close the connection."""
+        self.close_connection()
+
+    def open_connection(self):
+        """Establishes a persistent Meshtastic connection (TCP or Serial)."""
+        retries = 3
+        for attempt in range(1, retries + 1):
+            try:
+                if self.connection == 'tcp':
+                    logger.info(f"Attempting to establish TCP connection (Attempt {attempt}/{retries})...")
+                    self.interface = TCPInterface(hostname=self.tcp_host)
+                elif self.connection == 'serial':
+                    logger.info(f"Attempting to establish Serial connection (Attempt {attempt}/{retries})...")
+                    self.interface = SerialInterface()
+                else:
+                    logger.error(f"Unknown connection type: {self.connection}")
+                    sys.exit(1)
+
+                # Subscribe to the 'meshtastic.receive' topic
                 pub.subscribe(self.on_receive, "meshtastic.receive")
-                logger.info("Connected via TCP to %s.", self.args.tcp_host)
-            elif self.args.connection == "serial":
-                logger.info("Establishing persistent Serial connection...")
-                self.interface = SerialInterface()
-                pub.subscribe(self.on_receive, "meshtastic.receive")
-                logger.info("Connected via Serial.")
-            else:
-                logger.error("Invalid connection mode: %s. Use 'tcp' or 'serial'.", self.args.connection)
-                sys.exit(1)
-        except Exception as e:
-            logger.error("Error establishing connection: %s", e)
-            sys.exit(1)
+                logger.info("Subscribed to 'meshtastic.receive' topic.")
+                logger.info("Persistent connection established.")
+                return  # Exit the loop if the connection is successful
+            except Exception as e:
+                logger.error(f"Error establishing connection (Attempt {attempt}/{retries}): {e}")
+                if attempt < retries:
+                    time.sleep(2)  # Wait before retrying
+                else:
+                    logger.error("Failed to establish connection after multiple attempts. Exiting.")
+                    self.close_connection()
+                    sys.exit(1)
 
     def close_connection(self):
         """Closes the persistent Meshtastic connection."""
@@ -199,10 +217,12 @@ class MeshtasticBot:
                 logger.info("Stopping Meshtastic threads...")
                 if hasattr(self.interface, "stop"):
                     try:
-                        self.interface.stop()  # Attempt to stop all threads
+                        self.interface.stop(timeout=10)  # Gracefully stop threads with a timeout
                         logger.info("Stopped all Meshtastic threads.")
                     except TimeoutError:
                         logger.warning("Timeout while stopping Meshtastic threads. Forcing connection close.")
+                    except Exception as e:
+                        logger.error(f"Error stopping threads: {e}")
                 self.interface.close()
                 logger.info("Persistent connection closed.")
         except Exception as e:
@@ -349,9 +369,19 @@ class MeshtasticBot:
                 if "=" not in qs_string:
                     qs_string = f"output={qs_string}"
                 params = parse_qs(qs_string)
+
+                # Handle parameters without values (e.g., "upload")
+                for key in list(params.keys()):
+                    if not params[key]:
+                        params[key] = [""]  # Retain the parameter as an empty string
+
+                # Manually check for standalone flags (e.g., "upload")
+                if "upload" in qs_string and "upload" not in params:
+                    params["upload"] = [""]
+
                 cmd = ["python3"] + build_command(params, RECEIVER_SCRIPT)
                 logger.info("Received 'receive!' command. Running: %s", " ".join(cmd))
-                
+
                 if self.interface:
                     try:
                         self.interface.close()
@@ -363,8 +393,8 @@ class MeshtasticBot:
                 time.sleep(5)
 
                 try:
-                    # Use subprocess.Popen for real-time logging
-                    process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                    # Use shlex.split to ensure proper argument handling
+                    process = subprocess.Popen(shlex.split(" ".join(cmd)), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
                     try:
                         # Stream stdout and stderr in real-time
                         for line in process.stdout:
@@ -401,12 +431,12 @@ class MeshtasticBot:
         Runs the bot, maintaining a persistent connection and listening for messages.
         """
         global logger
-        self.connect()
+        self.open_connection()
         try:
             while True:
                 if self.interface is None:
                     logger.info("Interface closed. Re-establishing connection...")
-                    self.connect()
+                    self.open_connection()
                 time.sleep(1)
         except KeyboardInterrupt:
             logger.info("KeyboardInterrupt received. Shutting down MeshtasticBot...")
@@ -432,9 +462,11 @@ def build_command(params, script):
     """
     args = [script]
     for key, value in params.items():
-        if len(value) > 0:
+        if value:  # If the parameter has a value
             args.append(f"--{key}")
             args.append(value[0])
+        else:  # Handle flags like 'upload' that have no value
+            args.append(f"--{key}")
     return args
 
 # ---------------------- Main Entry Point ----------------------
