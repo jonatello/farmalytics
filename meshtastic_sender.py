@@ -494,7 +494,7 @@ def main():
                         help="Connection mode: 'tcp' or 'serial'")
     parser.add_argument("--tcp_host", type=str, default="localhost",
                         help="TCP host (default: localhost, used only in TCP mode)")
-    parser.add_argument("--receiver", type=str, default='{"upload": true, "remote_target": "jonatello@192.168.2.4:/mnt/RaidZ/Master/Pictures/Motion/farmalytics3/", "ssh_key": "/home/pi/.ssh/id_rsa", "sender": "eb314389"}',
+    parser.add_argument("--receiver", type=str, default='{"sender": "eb314389"}',
                         help="Receiver JSON object containing receiver-specific parameters")
     args = parser.parse_args()
 
