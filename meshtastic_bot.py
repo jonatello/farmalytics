@@ -432,11 +432,11 @@ def main():
     parser = argparse.ArgumentParser(
         description="Meshtastic Bot with TCP/Serial Interaction, Robust Logging, and Filtering"
     )
-    parser.add_argument("--connection", type=str, choices=["tcp", "serial"], default="tcp",
+    parser.add_argument("-c","--connection", type=str, choices=["tcp", "serial"], default="tcp",
                         help="Connection mode: 'tcp' or 'serial' (default: tcp)")
-    parser.add_argument("--tcp_host", type=str, default="localhost",
+    parser.add_argument("-t","--tcp_host", type=str, default="localhost",
                         help="TCP host for Meshtastic connection (default: localhost, used only in TCP mode)")
-    parser.add_argument("--debug", action="store_true",
+    parser.add_argument("-d","--debug", action="store_true",
                         help="Enable debug mode for detailed logging.")
     args = parser.parse_args()
 
