@@ -378,7 +378,7 @@ def main():
     )
     parser.add_argument("-r","--run_time", type=int, default=60, help="Run time in minutes.")
     parser.add_argument("-s","--sender", default='eb314389', help="Sender node ID to filter messages from.")
-    parser.add_argument("-he","--header", type=str, default="nc", help="Expected message header prefix (before '!').")
+    parser.add_argument("-h","--header", type=str, default="nc", help="Expected message header prefix (before '!').")
     parser.add_argument("-o","--output", type=str, default="restored.jpg", help="Output file.")
     parser.add_argument("-rt","--remote_target", type=str, help="Remote path for file upload.")
     parser.add_argument("-k","--ssh_key", type=str, help="SSH identity file for rsync.")
