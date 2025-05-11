@@ -68,6 +68,7 @@ from pathlib import Path
 import requests
 import zopfli.gzip
 from threading import Lock
+import json
 
 # --------- Simple ASCII Table Helper ----------
 def print_table(title, items):
@@ -218,6 +219,7 @@ def upload_file(file_path: str, remote_target: str, ssh_key: str):
 # --------- Persistent Meshtastic Sender Class ----------
 from meshtastic.tcp_interface import TCPInterface
 from meshtastic.serial_interface import SerialInterface
+from urllib.parse import urlencode
 
 class PersistentMeshtasticSender:
     """
@@ -356,14 +358,37 @@ class PersistentMeshtasticSender:
                     sys.exit(1)
         return attempt
 
-    def send_receiver_message(self, total_chunks: int):
-        """Sends an initial message with the header "receive!" followed by the receiver parameters."""
+    def send_receiver_message(self, total_chunks: int, receiver: dict):
+        """
+        Sends an initial message with the header "receive!" followed by the receiver parameters.
+
+        Args:
+            total_chunks (int): The total number of chunks to be sent.
+            receiver (dict): A JSON object containing receiver-specific parameters.
+        """
         if self.header_template:
             header = self.header_template
         else:
             header = ""
 
-        initial_message = f"receive!upload&expected={total_chunks}&header={header}"
+        # Add total_chunks and header to the receiver dictionary
+        receiver["expected_messages"] = total_chunks
+        receiver["header"] = header
+
+        # Handle the 'upload' parameter separately
+        upload_flag = ""
+        if receiver.get("upload"):
+            upload_flag = "upload"
+            del receiver["upload"]  # Remove 'upload' from the dictionary
+
+        # Convert the remaining receiver dictionary to a query string
+        query_string = urlencode(receiver)
+
+        # Construct the initial message with the query string and upload flag
+        if upload_flag:
+            initial_message = f"receive!{upload_flag}&{query_string}"
+        else:
+            initial_message = f"receive!{query_string}"
 
         logger.info(f"Sending initial message: {initial_message}")
         try:
@@ -372,15 +397,20 @@ class PersistentMeshtasticSender:
             logger.error(f"Failed to send initial message: {e}")
             sys.exit(1)
 
-    def send_all_chunks(self):
-        """Reads file content, splits it into chunks, then sequentially sends each chunk."""
+    def send_all_chunks(self, receiver: dict):
+        """
+        Reads file content, splits it into chunks, then sequentially sends each chunk.
+
+        Args:
+            receiver (dict): A JSON object containing receiver-specific parameters.
+        """
         file_content = self.read_file()
         chunks = self.chunk_content(file_content)
         total_chunks = len(chunks)
         logger.info(f"Total chunks to send: {total_chunks}")
 
-        # Send the initial message with the maximum header value
-        self.send_receiver_message(total_chunks)
+        # Send the initial message with the receiver JSON
+        self.send_receiver_message(total_chunks, receiver)
 
         # Sleep for the specified start delay
         if self.start_delay > 0:
@@ -464,6 +494,8 @@ def main():
                         help="Connection mode: 'tcp' or 'serial'")
     parser.add_argument("--tcp_host", type=str, default="localhost",
                         help="TCP host (default: localhost, used only in TCP mode)")
+    parser.add_argument("--receiver", type=str, default='{"upload": true, "remote_target": "jonatello@192.168.2.4:/mnt/RaidZ/Master/Pictures/Motion/farmalytics3/", "ssh_key": "/home/pi/.ssh/id_rsa", "sender": "eb314389"}',
+                        help="Receiver JSON object containing receiver-specific parameters")
     args = parser.parse_args()
 
     # If upload is enabled, check that remote_target and ssh_key are provided.
@@ -503,6 +535,12 @@ def main():
     end_time = None
 
     try:
+        try:
+            receiver = json.loads(args.receiver)
+        except json.JSONDecodeError as e:
+            logger.error(f"Invalid JSON for --receiver: {e}")
+            sys.exit(1)
+
         if args.mode == "image_transfer":
             print("Running image processing pipeline...")
             summary = optimize_compress_zip_base64encode_jpg(
@@ -532,7 +570,7 @@ def main():
             ) as sender:
                 setup_signal_handlers(sender)
                 try:
-                    total_chunks, total_failures = sender.send_all_chunks()
+                    total_chunks, total_failures = sender.send_all_chunks(receiver=receiver)
                 finally:
                     sender.close_connection()
                     logger.info("Connection closed successfully.")
@@ -584,7 +622,7 @@ def main():
             ) as sender:
                 setup_signal_handlers(sender)
                 try:
-                    total_chunks, total_failures = sender.send_all_chunks()
+                    total_chunks, total_failures = sender.send_all_chunks(receiver=receiver)
                 finally:
                     sender.close_connection()
                     logger.info("Connection closed successfully.")
