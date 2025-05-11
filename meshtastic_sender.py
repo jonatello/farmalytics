@@ -69,6 +69,7 @@ import requests
 import zopfli.gzip
 from threading import Lock
 import json
+import atexit
 
 # --------- Simple ASCII Table Helper ----------
 def print_table(title, items):
@@ -288,21 +289,28 @@ class PersistentMeshtasticSender:
 
     def open_connection(self, tcp_host="localhost"):
         """Establishes a persistent Meshtastic connection (TCP or Serial)."""
-        try:
-            if self.connection == 'tcp':
-                logger.info("Establishing persistent TCP connection...")
-                self.interface = TCPInterface(hostname=tcp_host)
-            elif self.connection == 'serial':
-                logger.info("Establishing persistent Serial connection...")
-                self.interface = SerialInterface()
-            else:
-                logger.error(f"Unknown connection type: {self.connection}")
-                sys.exit(1)
-            logger.info("Persistent connection established.")
-        except Exception as e:
-            logger.error(f"Error establishing connection: {e}")
-            self.close_connection()
-            sys.exit(1)
+        retries = 3
+        for attempt in range(1, retries + 1):
+            try:
+                if self.connection == 'tcp':
+                    logger.info(f"Attempting to establish TCP connection (Attempt {attempt}/{retries})...")
+                    self.interface = TCPInterface(hostname=tcp_host)
+                elif self.connection == 'serial':
+                    logger.info(f"Attempting to establish Serial connection (Attempt {attempt}/{retries})...")
+                    self.interface = SerialInterface()
+                else:
+                    logger.error(f"Unknown connection type: {self.connection}")
+                    sys.exit(1)
+                logger.info("Persistent connection established.")
+                return  # Exit the loop if the connection is successful
+            except Exception as e:
+                logger.error(f"Error establishing connection (Attempt {attempt}/{retries}): {e}")
+                if attempt < retries:
+                    time.sleep(2)  # Wait before retrying
+                else:
+                    logger.error("Failed to establish connection after multiple attempts. Exiting.")
+                    self.close_connection()
+                    sys.exit(1)
 
     def close_connection(self):
         """Closes the persistent Meshtastic connection."""
@@ -311,10 +319,12 @@ class PersistentMeshtasticSender:
                 logger.info("Stopping Meshtastic threads...")
                 if hasattr(self.interface, "stop"):
                     try:
-                        self.interface.stop()  # Attempt to stop all threads
+                        self.interface.stop(timeout=10)  # Gracefully stop threads with a timeout
                         logger.info("Stopped all Meshtastic threads.")
                     except TimeoutError:
                         logger.warning("Timeout while stopping Meshtastic threads. Forcing connection close.")
+                    except Exception as e:
+                        logger.error(f"Error stopping threads: {e}")
                 self.interface.close()
                 logger.info("Persistent connection closed.")
         except Exception as e:
@@ -377,7 +387,7 @@ class PersistentMeshtasticSender:
 
         # Handle the 'upload' parameter separately
         upload_flag = ""
-        if receiver.get("upload"):
+        if receiver.get("upload", False):  # Check if 'upload' is explicitly set to True
             upload_flag = "upload"
             del receiver["upload"]  # Remove 'upload' from the dictionary
 
@@ -442,7 +452,7 @@ class PersistentMeshtasticSender:
 # --------- Signal Handling for Sending ----------
 def setup_signal_handlers(sender):
     def handler(sig, frame):
-        logger.info("CTRL+C detected. Closing connection...")
+        logger.info(f"Signal {sig} detected. Closing connection...")
         sender.close_connection()
         sys.exit(0)
     signal.signal(signal.SIGINT, handler)
@@ -686,6 +696,12 @@ def main():
         ]
         print_table("Execution Summary", exec_summary)
 
+    def cleanup():
+        if sender.interface:
+            logger.info("Cleaning up Meshtastic connection...")
+            sender.close_connection()
+
+    atexit.register(cleanup)
 
 if __name__ == "__main__":
     main()
