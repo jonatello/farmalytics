@@ -8,7 +8,7 @@ It listens for incoming messages and performs actions based on specific commands
 ### Purpose:
 1. **Command Handling**:
    - Listens for incoming messages over the Meshtastic network.
-   - Responds to specific commands such as "hi!", "sysinfo!", "help!", "ping!", "restart!", and "reboot!".
+   - Responds to specific commands such as "hi!", "sysinfo!", "help!", "ping!", "restartbot!", "restartweb!" and "reboot!".
    - Supports sending and receiving using query-string parameters.
 
 2. **Persistent Connection**:
@@ -27,7 +27,8 @@ It listens for incoming messages and performs actions based on specific commands
   - `sysinfo!`: Sends consolidated system info (CPU, memory, disk, IP, time, and uptime).
   - `help!`: Shows available commands (line-by-line).
   - `ping!`: Replies with "pong!" and includes SNR and RSSI values.
-  - `restart!`: Restarts the Meshtastic bot service.
+  - `restartbot!`: Restarts the Meshtastic bot service.
+  - `restartweb!`: Restarts the Meshtastic web service.
   - `reboot!`: Reboots the operating system.
   - `send!<query>`: Sends messages with meshtastic_sender.py using query-string parameters.
   - `receive!<query>`: Receives messages with meshtastic_receiver.py using query-string parameters.
@@ -267,14 +268,23 @@ class MeshtasticBot:
                     self.interface.sendText(response_message, wantAck=True)
                 return
             
-            if text == "restart!":
-                logger.info("Received 'restart!' command; restarting the service")
+            if text == "restartbot!":
+                logger.info("Received 'restartbot!' command; restarting the bot service")
                 try:
                     subprocess.run(["sudo", "systemctl", "restart", "meshtastic_bot.service"], check=True)
                     logger.info("Service restarted successfully.")
                 except subprocess.CalledProcessError as e:
-                    logger.error(f"Failed to restart the service: {e}")
+                    logger.error(f"Failed to restart bot the service: {e}")
                 return
+            
+            if text == "restartweb!":
+                logger.info("Received 'restartweb!' command; restarting the web service")
+                try:
+                    subprocess.run(["sudo", "systemctl", "restart", "meshtastic_bot.service"], check=True)
+                    logger.info("Service restarted successfully.")
+                except subprocess.CalledProcessError as e:
+                    logger.error(f"Failed to restart web the service: {e}")
+                return            
             
             if text == "reboot!":
                 logger.info("Received 'reboot!' command; rebooting the system")
