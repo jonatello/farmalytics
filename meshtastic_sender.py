@@ -449,52 +449,52 @@ def main():
     parser = argparse.ArgumentParser(
         description="Meshtastic Sender: Process an image or send a file via a persistent Meshtastic connection."
     )
-    parser.add_argument("--mode", choices=["image_transfer", "file_transfer", "message"], default="message",
+    parser.add_argument("-mo","--mode", choices=["image_transfer", "file_transfer", "message"], default="message",
                         help="Mode to run: 'image_transfer' to process and send an image, "
                              "'file_transfer' to send a file, 'message' to send a single message.")
-    parser.add_argument("--message", type=str, help="Message to send (required for 'message' mode).")
-    parser.add_argument("--header", type=str, default="nc",
+    parser.add_argument("-m","--message", type=str, help="Message to send (required for 'message' mode).")
+    parser.add_argument("-h","--header", type=str, default="nc",
                         help="Header template (use '#' as digit placeholders)")
     # Parameters for image processing:
-    parser.add_argument("--quality", type=int, default=90,
+    parser.add_argument("-q","--quality", type=int, default=90,
                         help="JPEG quality factor for optimization")
-    parser.add_argument("--resize", type=str, default="800x600",
+    parser.add_argument("-re","--resize", type=str, default="800x600",
                         help="Resize dimensions (e.g., 800x600)")
-    parser.add_argument("--output", type=str, default="base64_image.gz",
+    parser.add_argument("-o","--output", type=str, default="base64_image.gz",
                         help="Output file from image processing")
-    parser.add_argument("--cleanup", action="store_true",
+    parser.add_argument("-cl","--cleanup", action="store_true",
                         help="Enable cleanup of intermediate files after processing (default: off)")
-    parser.add_argument("--preview_image", action="store_true",
+    parser.add_argument("-p","--preview_image", action="store_true",
                     help="Generate an ASCII preview of the image using jp2a (default: off)")
     # Upload parameters (only required if --upload is set)
-    parser.add_argument("--remote_target", type=str,
+    parser.add_argument("-rt","--remote_target", type=str,
                         help="Remote path for file upload (required if --upload is set)")
-    parser.add_argument("--ssh_key", type=str,
+    parser.add_argument("-k","--ssh_key", type=str,
                         help="SSH identity file for rsync (required if --upload is set)")
-    parser.add_argument("--upload", action="store_true",
+    parser.add_argument("-u","--upload", action="store_true",
                         help="Upload the processed image file using rsync (requires --remote_target and --ssh_key)")
     # Parameters for sending pipeline:
-    parser.add_argument("--file_path", type=str,
+    parser.add_argument("-fp","--file_path", type=str,
                         help="Path to text file to send (required for 'file_transfer' mode)")
-    parser.add_argument("--chunk_size", type=int, default=180,
+    parser.add_argument("-cs","--chunk_size", type=int, default=180,
                         help="Maximum length of each chunk when sending")
-    parser.add_argument("--dest", type=str, default="!47a78d36",
+    parser.add_argument("-de","--dest", type=str, default="!47a78d36",
                        help="Destination Node ID for Meshtastic send (default: '!47a78d36')")
-    parser.add_argument("--max_retries", type=int, default=10,
+    parser.add_argument("-mr","--max_retries", type=int, default=10,
                         help="Maximum number of retries per chunk")
-    parser.add_argument("--retry_delay", type=int, default=1.0,
+    parser.add_argument("-rd","--retry_delay", type=int, default=1.0,
                         help="Delay in seconds between retries")
-    parser.add_argument("--sleep_delay", type=float, default=0.1,
+    parser.add_argument("-sld","--sleep_delay", type=float, default=0.1,
                         help="Sleep delay in seconds between sending chunks")
-    parser.add_argument("--start_delay", type=float, default=30.0,
+    parser.add_argument("-std","--start_delay", type=float, default=30.0,
                         help="Delay in seconds after sending the initial receiver message but before sending chunks")
-    parser.add_argument("--debug", action="store_true",
+    parser.add_argument("-d","--debug", action="store_true",
                         help="Enable debug mode for detailed logging")
-    parser.add_argument("--connection", type=str, choices=["tcp", "serial"], default="tcp",
+    parser.add_argument("-c","--connection", type=str, choices=["tcp", "serial"], default="tcp",
                         help="Connection mode: 'tcp' or 'serial'")
-    parser.add_argument("--tcp_host", type=str, default="localhost",
+    parser.add_argument("-t","--tcp_host", type=str, default="localhost",
                         help="TCP host (default: localhost, used only in TCP mode)")
-    parser.add_argument("--receiver", type=str, default='{"sender": "eb314389"}',
+    parser.add_argument("-rp","--receiver", type=str, default='{"sender": "eb314389"}',
                         help="Receiver JSON object containing receiver-specific parameters")
     args = parser.parse_args()
 
