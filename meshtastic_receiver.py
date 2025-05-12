@@ -48,6 +48,7 @@ import subprocess
 import sys
 import time
 from threading import Lock
+import atexit
 
 # ---------------------- Simplified Logging Configuration ----------------------
 def configure_logging(debug_mode):
