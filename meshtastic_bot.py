@@ -454,6 +454,10 @@ class MeshtasticBot:
                 if "=" not in qs_string:
                     qs_string = f"header={qs_string}"
                 params = parse_qs(qs_string)
+
+                # Log parsed parameters for debugging
+                logger.debug(f"Parsed parameters: {params}")
+
                 cmd = ["python3"] + build_command(params, SENDER_SCRIPT)
                 logger.info("Received 'send!' command. Running: %s", " ".join(cmd))
 
@@ -468,8 +472,8 @@ class MeshtasticBot:
                 time.sleep(5)  # Add a short delay to ensure the connection is fully closed
 
                 try:
-# Use subprocess.Popen for real-time logging
-                    process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                    # Use subprocess.Popen for real-time logging
+                    process = subprocess.Popen(shlex.split(" ".join(cmd)), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
                     try:
                         # Stream stdout and stderr in real-time
                         for line in process.stdout:
@@ -504,6 +508,9 @@ class MeshtasticBot:
                     qs_string = f"output={qs_string}"
                 params = parse_qs(qs_string)
 
+                # Log parsed parameters for debugging
+                logger.debug(f"Parsed parameters: {params}")
+
                 # Handle parameters without values (e.g., "upload")
                 for key in list(params.keys()):
                     if not params[key]:
@@ -513,6 +520,7 @@ class MeshtasticBot:
                 if "upload" in qs_string and "upload" not in params:
                     params["upload"] = [""]
 
+                # Ensure the output parameter is passed to the receiver script
                 cmd = ["python3"] + build_command(params, RECEIVER_SCRIPT)
                 logger.info("Received 'receive!' command. Running: %s", " ".join(cmd))
 
@@ -523,10 +531,9 @@ class MeshtasticBot:
                     except Exception as e:
                         logger.error("Error closing interface: %s", e)
 
-                time.sleep(5) # Add a short delay to ensure the connection is fully closed
+                time.sleep(5)  # Add a short delay to ensure the connection is fully closed
 
                 try:
-# Use shlex.split to ensure proper argument handling
                     process = subprocess.Popen(shlex.split(" ".join(cmd)), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
                     try:
                         # Stream stdout and stderr in real-time
@@ -634,7 +641,12 @@ def build_command(params, script):
     """
     args = [script]
     for key, value in params.items():
-        if value:  # If the parameter has a value
+        if key == "receiver":
+            # Ensure the receiver JSON is properly quoted
+            receiver_json = value[0]
+            args.append(f"--{key}")
+            args.append(f"'{receiver_json}'")  # Quote the JSON string
+        elif value:  # If the parameter has a value
             args.append(f"--{key}")
             args.append(value[0])
         else:  # Handle flags like 'upload' that have no value
