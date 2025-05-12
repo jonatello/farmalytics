@@ -326,7 +326,7 @@ class MeshtasticBot:
                             for i, chunk in enumerate(message_chunks, start=1):
                                 numbered_chunk = f"[{i}/{len(message_chunks)}] {chunk}"
                                 logger.debug(f"Sending chunk: {numbered_chunk}")
-                                self.interface.sendText(numbered_chunk, wantAck=True)
+                                self.interface.sendText(numbered_chunk, sender, wantAck=True)
                                 time.sleep(1.0)  # Add a short delay between messages
                         except Exception as e:
                             logger.error(f"Error sending chunk {i}/{len(message_chunks)}: {e}")
@@ -341,7 +341,7 @@ class MeshtasticBot:
                 logger.info("Received 'hi!' command; replying 'well hai!'")
                 if self.interface:
                     try:
-                        self.interface.sendText("well hai 😺!", wantAck=True)
+                        self.interface.sendText("well hai 😺!", sender, wantAck=True)
                     except Exception as e:
                         logger.error(f"Error sending 'hi!' response: {e}")
                 return
@@ -354,7 +354,7 @@ class MeshtasticBot:
                         message_chunks = split_message_with_numbers(sysinfo)
                         for i, chunk in enumerate(message_chunks, start=1):
                             numbered_chunk = f"[{i}/{len(message_chunks)}] {chunk}"
-                            self.interface.sendText(numbered_chunk, wantAck=True)
+                            self.interface.sendText(numbered_chunk, sender, wantAck=True)
                             time.sleep(1.0)
                     except Exception as e:
                         logger.error(f"Error sending system info: {e}")
@@ -365,7 +365,7 @@ class MeshtasticBot:
                 if self.interface:
                     try:
                         for line in self.get_meshtastic_info().splitlines():
-                            self.interface.sendText(line, wantAck=True)
+                            self.interface.sendText(line, sender, wantAck=True)
                             time.sleep(1.0)  # Add a short delay between messages
                     except Exception as e:
                         logger.error(f"Error sending Meshtastic info: {e}")
@@ -379,7 +379,7 @@ class MeshtasticBot:
                         message_chunks = split_message_with_numbers(help_text)
                         for i, chunk in enumerate(message_chunks, start=1):
                             numbered_chunk = f"[{i}/{len(message_chunks)}] {chunk}"
-                            self.interface.sendText(numbered_chunk, wantAck=True)
+                            self.interface.sendText(numbered_chunk, sender, wantAck=True)
                             time.sleep(1.0)
                     except Exception as e:
                         logger.error(f"Error sending help text: {e}")
@@ -399,7 +399,7 @@ class MeshtasticBot:
                         response_message = f"pong! SNR: {snr} dB, RSSI: {rssi} dBm"
 
                         # Send the response
-                        self.interface.sendText(response_message, wantAck=True)
+                        self.interface.sendText(response_message, sender, wantAck=True)
                     except Exception as e:
                         logger.error(f"Error sending 'ping!' response: {e}")
                 return
@@ -410,15 +410,15 @@ class MeshtasticBot:
                     subprocess.run(["sudo", "systemctl", "restart", "meshtastic_bot.service"], check=True)
                     logger.info("Service restarted successfully.")
                     if self.interface:
-                        self.interface.sendText("Bot service restarted successfully.", wantAck=True)
+                        self.interface.sendText("Bot service restarted successfully.", sender, wantAck=True)
                 except subprocess.CalledProcessError as e:
                     logger.error(f"Failed to restart the bot service: {e}")
                     if self.interface:
-                        self.interface.sendText(f"Failed to restart the bot service: {e}", wantAck=True)
+                        self.interface.sendText(f"Failed to restart the bot service: {e}", sender, wantAck=True)
                 except Exception as e:
                     logger.error(f"Unexpected error during bot restart: {e}")
                     if self.interface:
-                        self.interface.sendText(f"Unexpected error during bot restart: {e}", wantAck=True)
+                        self.interface.sendText(f"Unexpected error during bot restart: {e}", sender, wantAck=True)
                 return
             
             if text == "restartweb!":
@@ -427,15 +427,15 @@ class MeshtasticBot:
                     subprocess.run(["sudo", "systemctl", "restart", "meshtastic_web.service"], check=True)
                     logger.info("Web service restarted successfully.")
                     if self.interface:
-                        self.interface.sendText("Web service restarted successfully.", wantAck=True)
+                        self.interface.sendText("Web service restarted successfully.", sender, wantAck=True)
                 except subprocess.CalledProcessError as e:
                     logger.error(f"Failed to restart the web service: {e}")
                     if self.interface:
-                        self.interface.sendText(f"Failed to restart the web service: {e}", wantAck=True)
+                        self.interface.sendText(f"Failed to restart the web service: {e}", sender, wantAck=True)
                 except Exception as e:
                     logger.error(f"Unexpected error during web service restart: {e}")
                     if self.interface:
-                        self.interface.sendText(f"Unexpected error during web service restart: {e}", wantAck=True)
+                        self.interface.sendText(f"Unexpected error during web service restart: {e}", sender, wantAck=True)
                 return            
             
             if text == "reboot!":
@@ -490,12 +490,12 @@ class MeshtasticBot:
                 except Exception as e:
                     logger.error(f"Error executing send! command: {e}")
                     if self.interface:
-                        self.interface.sendText(f"Error executing send! command: {e}", wantAck=True)
+                        self.interface.sendText(f"Error executing send! command: {e}", sender, wantAck=True)
                 finally:
                     logger.info("Re-establishing Meshtastic connection after send! command.")
                     self.open_connection()
                     if self.interface:
-                        self.interface.sendText("Send command completed successfully.", wantAck=True)
+                        self.interface.sendText("Send command completed successfully.", sender, wantAck=True)
                 return
 
             if text.startswith("receive!"):
@@ -549,12 +549,12 @@ class MeshtasticBot:
                 except Exception as e:
                     logger.error(f"Error executing receive! command: {e}")
                     if self.interface:
-                        self.interface.sendText(f"Error executing receive! command: {e}", wantAck=True)
+                        self.interface.sendText(f"Error executing receive! command: {e}", sender, wantAck=True)
                 finally:
                     logger.info("Re-establishing Meshtastic connection after receive! command.")
                     self.open_connection()
                     if self.interface:
-                        self.interface.sendText("Receive command completed successfully.", wantAck=True)
+                        self.interface.sendText("Receive command completed successfully.", sender, wantAck=True)
                 return
 
             logger.info("No matching command for message: %s", text)
