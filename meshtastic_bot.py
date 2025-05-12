@@ -508,9 +508,6 @@ class MeshtasticBot:
                     qs_string = f"output={qs_string}"
                 params = parse_qs(qs_string)
 
-                # Log parsed parameters for debugging
-                logger.debug(f"Parsed parameters: {params}")
-
                 # Handle parameters without values (e.g., "upload")
                 for key in list(params.keys()):
                     if not params[key]:
@@ -519,6 +516,9 @@ class MeshtasticBot:
                 # Manually check for standalone flags (e.g., "upload")
                 if "upload" in qs_string and "upload" not in params:
                     params["upload"] = [""]
+
+                # Log parsed parameters for debugging
+                logger.debug(f"Parsed parameters: {params}")
 
                 # Ensure the output parameter is passed to the receiver script
                 cmd = ["python3"] + build_command(params, RECEIVER_SCRIPT)
