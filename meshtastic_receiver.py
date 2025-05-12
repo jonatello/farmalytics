@@ -70,26 +70,84 @@ def configure_logging(debug_mode):
 logger = logging.getLogger("MeshtasticReceiver")
 
 
-# ---------------------- MeshtasticProcessor Class ----------------------
-class MeshtasticProcessor:
+# ---------------------- PersistentMeshtasticReceiver Class ----------------------
+from meshtastic.tcp_interface import TCPInterface
+from meshtastic.serial_interface import SerialInterface
+
+class PersistentMeshtasticReceiver:
     def __init__(self, args):
         """
-        Initializes the processor with the provided arguments.
+        Initializes the receiver with the provided arguments.
 
         Args:
           args: Command-line arguments (contains sender, header, etc.).
         """
         self.args = args
+        self.connection = args.connection
         self.received_messages = {}     # Dictionary mapping header number to full message text.
         self.duplicate_count = 0        # Count of duplicate messages received.
         self.combined_messages = []     # List of payload strings (after header removal).
         self.state_lock = Lock()        # Lock to protect shared state.
         self.running = True             # Controls the main loop execution.
-        self.iface = None               # Meshtastic interface object.
         self.last_message_time = time.time()  # Timestamp of the last received message.
         self.start_time = time.time()   # Timestamp marking script start.
         self.header_digit_pattern = re.compile(r"\d+")  # Precompiled regex for extracting digits from header.
         self.last_progress_time = time.time()  # Timestamp for progress updates.
+        self.interface = None
+
+    def __enter__(self):
+        """Context manager entry point: Open the connection."""
+        self.open_connection()
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        """Context manager exit point: Close the connection."""
+        self.close_connection()
+
+    def open_connection(self, tcp_host="localhost"):
+        """Establishes a persistent Meshtastic connection (TCP or Serial)."""
+        retries = 3
+        for attempt in range(1, retries + 1):
+            try:
+                if self.connection == 'tcp':
+                    logger.info(f"Attempting to establish TCP connection (Attempt {attempt}/{retries})...")
+                    self.interface = TCPInterface(hostname=tcp_host)
+                elif self.connection == 'serial':
+                    logger.info(f"Attempting to establish Serial connection (Attempt {attempt}/{retries})...")
+                    self.interface = SerialInterface()
+                else:
+                    logger.error(f"Unknown connection type: {self.connection}")
+                    sys.exit(1)
+                logger.info("Persistent connection established.")
+                return  # Exit the loop if the connection is successful
+            except Exception as e:
+                logger.error(f"Error establishing connection (Attempt {attempt}/{retries}): {e}")
+                if attempt < retries:
+                    time.sleep(2)  # Wait before retrying
+                else:
+                    logger.error("Failed to establish connection after multiple attempts. Exiting.")
+                    self.close_connection()
+                    sys.exit(1)
+
+    def close_connection(self):
+        """Closes the persistent Meshtastic connection."""
+        try:
+            if self.interface:
+                logger.info("Stopping Meshtastic threads...")
+                if hasattr(self.interface, "stop"):
+                    try:
+                        self.interface.stop(timeout=10)  # Gracefully stop threads with a timeout
+                        logger.info("Stopped all Meshtastic threads.")
+                    except TimeoutError:
+                        logger.warning("Timeout while stopping Meshtastic threads. Forcing connection close.")
+                    except Exception as e:
+                        logger.error(f"Error stopping threads: {e}")
+                self.interface.close()
+                logger.info("Persistent connection closed.")
+        except Exception as e:
+            logger.error(f"Error closing connection: {e}")
+        finally:
+            self.interface = None
 
     def print_table(self, title, items):
         """
@@ -204,29 +262,6 @@ class MeshtasticProcessor:
         except Exception as e:
             logger.error(f"Exception in onReceive: {e}")
 
-    def connect_meshtastic(self):
-        """
-        Establishes a connection to the Meshtastic device using either TCP or serial.
-
-        The connection mode is selected based on the command-line argument.
-        """
-        logger.info("Connecting to Meshtastic device...")
-        try:
-            if self.args.connection == "tcp":
-                from meshtastic.tcp_interface import TCPInterface
-                self.iface = TCPInterface(hostname=self.args.tcp_host)
-                from pubsub import pub
-                pub.subscribe(self.onReceive, "meshtastic.receive")
-                logger.info(f"Connected via TCP on {self.args.tcp_host}")
-            else:
-                from meshtastic import serial_interface
-                self.iface = serial_interface.SerialInterface()
-                self.iface.onReceive = self.onReceive
-                logger.info("Connected via Serial.")
-        except Exception as e:
-            logger.error(f"Connection error: {e}")
-            sys.exit(1)
-
     def combine_messages(self):
         """
         Combines the received messages into a single payload string.
@@ -295,7 +330,7 @@ class MeshtasticProcessor:
           - If --upload is set, performs the file upload.
           - Prints the execution summary.
         """
-        self.connect_meshtastic()
+        self.open_connection()
         end_time = self.start_time + self.args.run_time * 60
 
         logger.info("Entering main processing loop...")
@@ -326,11 +361,12 @@ class MeshtasticProcessor:
             await asyncio.sleep(0.5)
 
         # Attempt graceful shutdown of the Meshtastic interface.
-        if self.iface:
+        if self.interface:
             try:
-                self.iface.close()
+                self.interface.close_connection()
+                logger.info("Connection closed successfully.")
             except Exception as e:
-                logger.debug(f"Error closing interface: {e}")
+                logger.debug(f"Error closing connection: {e}")
 
         # Process collected messages.
         self.combine_messages()
@@ -352,24 +388,19 @@ class MeshtasticProcessor:
         self.print_execution_summary(total_runtime, total_msgs, missing_msgs, file_size)
 
 
-# ---------------------- Signal Handling ----------------------
-def setup_signal_handlers(processor):
-    """
-    Sets up handlers for SIGINT and SIGTERM so that the processor can shutdown gracefully.
-
-    When triggered, the running flag is set to False.
-    """
+# ---------------------- Signal Handling for Receiving ----------------------
+def setup_signal_handlers(receiver):
     def handler(sig, frame):
-        logger.info("CTRL+C detected. Initiating shutdown...")
-        processor.running = False
+        logger.info(f"Signal {sig} detected. Closing connection...")
+        receiver.close_connection()
+        sys.exit(0)
     signal.signal(signal.SIGINT, handler)
     signal.signal(signal.SIGTERM, handler)
-
 
 # ---------------------- Main Entry Point ----------------------
 def main():
     """
-    Parses command-line arguments, configures logging, and initializes the MeshtasticProcessor.
+    Parses command-line arguments, configures logging, and initializes the PersistentMeshtasticReceiver.
 
     Sets up signal handlers and starts the asynchronous processing loop.
     """
@@ -378,13 +409,13 @@ def main():
     )
     parser.add_argument("-r","--run_time", type=int, default=60, help="Run time in minutes.")
     parser.add_argument("-s","--sender", default='eb314389', help="Sender node ID to filter messages from.")
-    parser.add_argument("-h","--header", type=str, default="nc", help="Expected message header prefix (before '!').")
+    parser.add_argument("-he","--header", type=str, default="nc", help="Expected message header prefix (before '!').")
     parser.add_argument("-o","--output", type=str, default="restored.jpg", help="Output file.")
     parser.add_argument("-rt","--remote_target", type=str, help="Remote path for file upload.")
     parser.add_argument("-k","--ssh_key", type=str, help="SSH identity file for rsync.")
     parser.add_argument("-p","--poll_interval", type=int, default=10, help="Poll interval in seconds.")
     parser.add_argument("-i","--inactivity_timeout", type=int, default=120, help="Inactivity timeout in seconds.")
-    parser.add_argument("-c","--connection", type=str, default="tcp", choices=["tcp", "serial"], help="Connection mode.")
+    parser.add_argument("-c","--connection", type=str, choices=["tcp", "serial"], default="tcp", help="Connection mode.")
     parser.add_argument("-t","--tcp_host", type=str, default="localhost", help="TCP host (default: localhost).")
     parser.add_argument("-d","--debug", action="store_true", help="Enable debug mode for detailed logging.")
     parser.add_argument("-u","--upload", action="store_true", help="If set, upload the processed file using rsync.")
@@ -392,8 +423,8 @@ def main():
     args = parser.parse_args()
 
     configure_logging(args.debug)
-    processor = MeshtasticProcessor(args)
-    processor.print_table("Startup Summary", [
+    receiver = PersistentMeshtasticReceiver(args)
+    receiver.print_table("Startup Summary", [
         ("run_time (min)", args.run_time),
         ("sender", args.sender),
         ("header", args.header),
@@ -408,13 +439,20 @@ def main():
         ("expected_messages", args.expected_messages),
         ("debug", args.debug),
     ])
-    setup_signal_handlers(processor)
+    setup_signal_handlers(receiver)
 
     try:
-        asyncio.run(processor.run())
+        asyncio.run(receiver.run())
     except Exception as e:
         logger.error(f"Fatal error: {e}")
         sys.exit(1)
+
+    def cleanup():
+        if receiver.interface:
+            logger.info("Cleaning up Meshtastic connection...")
+            receiver.close_connection()
+
+    atexit.register(cleanup)
 
 if __name__ == "__main__":
     main()
