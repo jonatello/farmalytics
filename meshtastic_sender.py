@@ -83,7 +83,8 @@ def print_table(title, items):
     for key, value in items:
         print("| {:<{w1}} | {:<{w2}} |".format(key, str(value), w1=table_width1 - 2, w2=table_width2 - 2))
     print(separator)
-    sys.stdout.flush()  # Ensure output is flushed
+    sys.stderr.flush()
+    sys.stdout.flush()
 
 # --------- Logging Configuration ----------
 def configure_logging(debug_mode):
