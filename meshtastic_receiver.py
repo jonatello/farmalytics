@@ -50,6 +50,8 @@ import time
 from threading import Lock
 import atexit
 
+from pubsub import pub
+
 # ---------------------- Simplified Logging Configuration ----------------------
 def configure_logging(debug_mode):
     """
@@ -208,21 +210,24 @@ class PersistentMeshtasticReceiver:
         ]
         self.print_table("Execution Summary", stats)
 
-    def onReceive(self, packet, interface=None):
+    def on_receive(self, packet, interface=None):
         """
         Callback to process an incoming message packet.
 
         Filters the incoming packet based on:
-          - sender (the original filtering parameter).
+          - sender (if provided as a parameter).
           - The message header (it must start with the expected header string).
 
         After validation, it extracts the numeric header and stores the full message.
         """
         try:
-            # Check that the message originates from the expected sender.
+            # Log the entire packet for debugging
+            logger.debug(f"Received packet: {packet}")
+
+            # Check that the message originates from the expected sender, if specified.
             raw_sender = packet.get("fromId")
-            if not raw_sender or raw_sender.lstrip("!") != self.args.sender:
-                logger.debug(f"Ignored message from sender '{raw_sender}'; expected sender '{self.args.sender}'.")
+            if self.args.sender and (not raw_sender or raw_sender.lstrip("!") != self.args.sender):
+                logger.info(f"Ignored message from sender '{raw_sender}'; expected sender '{self.args.sender}'.")
                 return
 
             # Extract and sanitize the message text.
@@ -232,16 +237,20 @@ class PersistentMeshtasticReceiver:
                 logger.debug("Ignored packet with no text.")
                 return
 
-            # Ensure the message begins with the expected header.
+            # Ensure the message begins with the expected header followed by a numeric portion.
             if not text.startswith(self.args.header):
-                logger.debug(f"Ignored message because it does not start with '{self.args.header}': {text}")
+                logger.info(f"Ignored message because it does not start with '{self.args.header}': {text}")
                 return
 
             # Remove the header by splitting on the first "!" character.
             if "!" in text:
-                header_part, _ = text.split("!", 1)
+                header_part, payload = text.split("!", 1)
             else:
                 header_part = text
+                payload = ""
+
+            # Log extracted header and payload for debugging
+            logger.debug(f"Header part: {header_part}, Payload: {payload}")
 
             # Extract the numeric portion from the header using the precompiled regex.
             match = self.header_digit_pattern.search(header_part)
@@ -256,12 +265,12 @@ class PersistentMeshtasticReceiver:
                     self.duplicate_count += 1
                     logger.debug(f"Ignored duplicate message: {header_part}!")
                 else:
-                    self.received_messages[header_num] = text
-                    logger.info(f"Stored message {header_part}! from sender {self.args.sender}.")
+                    self.received_messages[header_num] = payload
+                    logger.info(f"Stored message {header_part}! from sender '{raw_sender}'.")
                     self.last_message_time = time.time()
 
         except Exception as e:
-            logger.error(f"Exception in onReceive: {e}")
+            logger.error(f"Exception in on_receive: {e}")
 
     def combine_messages(self):
         """
@@ -332,16 +341,24 @@ class PersistentMeshtasticReceiver:
           - Prints the execution summary.
         """
         self.open_connection()
-        end_time = self.start_time + self.args.run_time * 60
+
+        # Set the on_receive callback
+        pub.subscribe(self.on_receive, "meshtastic.receive")
+        logger.info("Subscribed to 'meshtastic.receive' topic.")
 
         logger.info("Entering main processing loop...")
+        end_time = self.start_time + self.args.run_time * 60
+
         while self.running and time.time() < end_time:
             now = time.time()
+
+            # Check for inactivity timeout
             if now - self.last_message_time > self.args.inactivity_timeout:
                 logger.info("Inactivity timeout reached. Ending collection.")
                 self.running = False
                 break
 
+            # Log progress at regular intervals
             if now - self.last_progress_time >= self.args.poll_interval:
                 with self.state_lock:
                     total_msgs = len(self.received_messages)
@@ -409,10 +426,10 @@ def main():
         description="Meshtastic Receiver with Asynchronous Processing and Robust Error Handling"
     )
     parser.add_argument("-r","--run_time", type=int, default=60, help="Run time in minutes.")
-    parser.add_argument("-s","--sender", default='eb314389', help="Sender node ID to filter messages from.")
+    parser.add_argument("-s","--sender", type=str, help="Sender node ID to filter messages from.")
     parser.add_argument("-he","--header", type=str, default="nc", help="Expected message header prefix (before '!').")
     parser.add_argument("-o","--output", type=str, default="restored.jpg", help="Output file.")
-    parser.add_argument("-rt","--remote_target", type=str, help="Remote path for file upload.")
+    parser.add_argument("-rt","--remote_target", type=str, default="jonatello@192.168.2.4:/mnt/RaidZ/Master/Pictures/Motion/farmalytics3/", help="Remote path for file upload.")
     parser.add_argument("-k","--ssh_key", type=str, help="SSH identity file for rsync.")
     parser.add_argument("-p","--poll_interval", type=int, default=10, help="Poll interval in seconds.")
     parser.add_argument("-i","--inactivity_timeout", type=int, default=120, help="Inactivity timeout in seconds.")
