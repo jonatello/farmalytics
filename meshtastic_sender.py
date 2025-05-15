@@ -107,7 +107,7 @@ def optimize_compress_zip_base64encode_jpg(
         snapshot_url="http://localhost:8080/0/action/snapshot",
         output_file="base64_image.gz",
         cleanup=False,
-        preview_image=False):  # Add preview_image as a parameter
+        preview_image=False):
     """
     Captures a snapshot, optimizes/resizes the JPEG, compresses it with Zopfli gzip,
     and Base64 encodes the compressed image into output_file.
@@ -120,8 +120,8 @@ def optimize_compress_zip_base64encode_jpg(
       5. Optimize the JPEG using jpegoptim.
       6. Further optimize with jpegtran.
       7. Resize the image using ImageMagick's convert.
-      8. Compress the file using zopfli.gzip.
-      9. Base64 encode the compressed file.
+      8. Compress the file using the `compress_file` helper.
+      9. Base64 encode the compressed file using the `base64_encode_file` helper.
      10. Remove intermediate files.
 
     Returns:
@@ -144,7 +144,7 @@ def optimize_compress_zip_base64encode_jpg(
     shutil.copy2(source_snapshot, image_path)
 
     # Generate an ASCII preview of the image using jp2a
-    if preview_image:  # Use the passed parameter instead of args.preview_image
+    if preview_image:
         print(f"Generating ASCII preview of {image_path} ...")
         try:
             subprocess.run(["jp2a", "--width=80", image_path], check=True)
@@ -178,29 +178,32 @@ def optimize_compress_zip_base64encode_jpg(
     resized_size = os.stat(compressed_image_path).st_size
     print(f"Size after resizing: {resized_size} bytes")
     
+    # Use the compress_file helper
     print("Compressing image using Zopfli gzip ...")
-    with open(compressed_image_path, "rb") as f_in:
-        data = f_in.read()
-    compressed_data = zopfli.gzip.compress(data)
-    with open(zipped_image_path, "wb") as f_out:
-        f_out.write(compressed_data)
+    compress_file(compressed_image_path, zipped_image_path)
     zipped_size = os.stat(zipped_image_path).st_size
     print(f"Size after compression: {zipped_size} bytes")
     
+    # Use the base64_encode_file helper
     print("Encoding compressed image to Base64 ...")
-    with open(zipped_image_path, "rb") as f_in:
-        zipped_content = f_in.read()
-    base64_encoded = base64.b64encode(zipped_content)
-    with open(output_file, "wb") as f_out:
-        f_out.write(base64_encoded)
+    base64_encode_file(zipped_image_path, output_file)
     base64_size = os.stat(output_file).st_size
     print(f"Size after Base64 encoding: {base64_size} bytes")
     
+    # Cleanup intermediate files
     os.remove(image_path)
     os.remove(compressed_image_path)
     os.remove(zipped_image_path)
     
     print("Image processing complete. Base64 output saved to:", output_file)
+
+    # Return a summary dictionary
+    summary["initial_size"] = initial_size
+    summary["optimized_size"] = optimized_size
+    summary["resized_size"] = resized_size
+    summary["compressed_size"] = zipped_size
+    summary["base64_size"] = base64_size
+    return summary
 
 # --------- File Upload Function ----------
 def upload_file(file_path: str, remote_target: str, ssh_key: str):
@@ -217,6 +220,41 @@ def upload_file(file_path: str, remote_target: str, ssh_key: str):
     except subprocess.CalledProcessError as e:
         logger.error(f"Upload failed: {e}")
         sys.exit(1)
+
+# --------- File Compression and Encoding Functions ----------
+def compress_file(input_path: str, output_path: str):
+    """
+    Compresses a file using Zopfli gzip.
+    
+    Args:
+        input_path (str): Path to the input file.
+        output_path (str): Path to save the compressed file.
+    """
+    print(f"Compressing file {input_path} using Zopfli gzip...")
+    with open(input_path, "rb") as f_in:
+        data = f_in.read()
+    compressed_data = zopfli.gzip.compress(data)
+    with open(output_path, "wb") as f_out:
+        f_out.write(compressed_data)
+    compressed_size = os.stat(output_path).st_size
+    print(f"Compressed file size: {compressed_size} bytes")
+
+def base64_encode_file(input_path: str, output_path: str):
+    """
+    Encodes a file to Base64 format.
+    
+    Args:
+        input_path (str): Path to the input file.
+        output_path (str): Path to save the Base64-encoded file.
+    """
+    print(f"Encoding file {input_path} to Base64...")
+    with open(input_path, "rb") as f_in:
+        data = f_in.read()
+    base64_encoded = base64.b64encode(data)
+    with open(output_path, "wb") as f_out:
+        f_out.write(base64_encoded)
+    base64_size = os.stat(output_path).st_size
+    print(f"Base64-encoded file size: {base64_size} bytes")
 
 # --------- Persistent Meshtastic Sender Class ----------
 from meshtastic.tcp_interface import TCPInterface
@@ -456,15 +494,23 @@ class PersistentMeshtasticSender:
             logger.error(f"Failed to send message: {e}")
             sys.exit(1)
 
-# --------- Signal Handling for Sending ----------
-def setup_signal_handlers(sender):
-    def handler(sig, frame):
-        logger.info(f"Signal {sig} detected. Closing connection...")
-        sender.termination_event.set()  # Signal termination
-        sender.close_connection()
-        sys.exit(0)
-    signal.signal(signal.SIGINT, handler)
-    signal.signal(signal.SIGTERM, handler)
+    def cleanup(self):
+        """Cleans up resources and closes the connection."""
+        if self.interface:
+            try:
+                logger.info("Cleaning up Meshtastic connection...")
+                self.close_connection()
+            except Exception as e:
+                logger.error(f"Error during cleanup: {e}")
+
+    def setup_signal_handlers(self):
+        def handler(sig, frame):
+            logger.info(f"Signal {sig} detected. Closing connection...")
+            self.termination_event.set()  # Signal termination
+            self.cleanup()
+            sys.exit(0)
+        signal.signal(signal.SIGINT, handler)
+        signal.signal(signal.SIGTERM, handler)
 
 # --------- Main Routine ----------
 def main():
@@ -531,9 +577,6 @@ def main():
     param_items = [
         ("Mode", args.mode),
         ("Header", args.header),
-        ("Quality", args.quality),
-        ("Resize", args.resize),
-        ("ASCII Preview", args.preview_image),
         ("Output", args.output),
         ("File Path", args.file_path if args.file_path else args.output),
         ("Chunk Size", args.chunk_size),
@@ -549,6 +592,8 @@ def main():
         ("SSH Key", args.ssh_key if args.ssh_key else "N/A"),
         ("Receiver", args.receiver)
     ]
+    if args.mode == "image_transfer":
+        param_items.append(("ASCII Preview", args.preview_image))
     print_table("Sender Parameters", param_items)
 
     # Initialize variables for execution summary
@@ -588,24 +633,6 @@ async def run_sender(args):
             if not args.file_path:
                 args.file_path = args.output
             file_path = Path(args.file_path)
-            with PersistentMeshtasticSender(
-                file_path=file_path,
-                chunk_size=args.chunk_size,
-                dest=args.dest,
-                connection=args.connection,
-                max_retries=args.max_retries,
-                retry_delay=args.retry_delay,
-                header_template=args.header,
-                sleep_delay=args.sleep_delay,
-                start_delay=args.start_delay
-            ) as sender:
-                setup_signal_handlers(sender)
-                try:
-                    total_chunks, total_failures = await sender.send_all_chunks(receiver=receiver)
-                finally:
-                    sender.close_connection()
-                    logger.info("Connection closed successfully.")
-            end_time = time.time()
 
         elif args.mode == "file_transfer":
             if not args.file_path:
@@ -614,50 +641,40 @@ async def run_sender(args):
 
             print("Running file processing pipeline...")
             compressed_file = "compressed_file.gz"
-            print(f"Compressing file using Zopfli gzip ...")
-            with open(args.file_path, "rb") as f_in:
-                data = f_in.read()
-            compressed_data = zopfli.gzip.compress(data)
-            with open(compressed_file, "wb") as f_out:
-                f_out.write(compressed_data)
-
-            zipped_size = os.stat(compressed_file).st_size
-            print(f"Size after compression: {zipped_size} bytes")
-
-            print("Encoding compressed file to Base64 ...")
             base64_encoded_file = "base64_encoded_file.gz"
-            with open(compressed_file, "rb") as f_in:
-                zipped_content = f_in.read()
-            base64_encoded = base64.b64encode(zipped_content)
-            with open(base64_encoded_file, "wb") as f_out:
-                f_out.write(base64_encoded)
 
-            base64_size = os.stat(base64_encoded_file).st_size
-            print(f"Size after Base64 encoding: {base64_size} bytes")
+            # Compress the file
+            compress_file(args.file_path, compressed_file)
+
+            # Encode the compressed file to Base64
+            base64_encode_file(compressed_file, base64_encoded_file)
 
             if args.upload:
                 print("Uploading processed file...")
                 upload_file(base64_encoded_file, args.remote_target, args.ssh_key)
 
             file_path = Path(base64_encoded_file)
-            with PersistentMeshtasticSender(
-                file_path=file_path,
-                chunk_size=args.chunk_size,
-                dest=args.dest,
-                connection=args.connection,
-                max_retries=args.max_retries,
-                retry_delay=args.retry_delay,
-                header_template=args.header,
-                sleep_delay=args.sleep_delay,
-                start_delay=args.start_delay
-            ) as sender:
-                setup_signal_handlers(sender)
-                try:
-                    total_chunks, total_failures = await sender.send_all_chunks(receiver=receiver)
-                finally:
-                    sender.close_connection()
-                    logger.info("Connection closed successfully.")
-            end_time = time.time()
+
+        # Send the file over Meshtastic
+        with PersistentMeshtasticSender(
+            file_path=file_path,
+            chunk_size=args.chunk_size,
+            dest=args.dest,
+            connection=args.connection,
+            max_retries=args.max_retries,
+            retry_delay=args.retry_delay,
+            header_template=args.header,
+            sleep_delay=args.sleep_delay,
+            start_delay=args.start_delay
+        ) as sender:
+            sender.setup_signal_handlers()
+            atexit.register(sender.cleanup)  # Pass the method as a callable
+            try:
+                total_chunks, total_failures = await sender.send_all_chunks(receiver=receiver)
+            finally:
+                sender.close_connection()
+                logger.info("Connection closed successfully.")
+        end_time = time.time()
 
     elif args.mode == "message":
         if not args.message:
@@ -676,7 +693,8 @@ async def run_sender(args):
             sleep_delay=args.sleep_delay,
             start_delay=args.start_delay
         ) as sender:
-            setup_signal_handlers(sender)
+            sender.setup_signal_handlers()
+            atexit.register(sender.cleanup)  # Pass the method as a callable
             try:
                 sender.send_message(args.message)
             finally:
@@ -690,7 +708,10 @@ async def run_sender(args):
     else:
         total_size = 0
 
-    # Calculate transmission speed
+    # Print execution summary
+    print_execution_summary(start_time, end_time, total_chunks, total_size, args.receiver)
+
+def print_execution_summary(start_time, end_time, total_chunks, total_size, receiver):
     elapsed_seconds = end_time - start_time
     speed = total_size / elapsed_seconds if elapsed_seconds > 0 else 0
 
@@ -701,16 +722,9 @@ async def run_sender(args):
         ("Total Chunks Sent", total_chunks),
         ("Total Data Sent", f"{total_size} bytes"),
         ("Transmission Speed", f"{speed:.2f} bytes/second"),
-        ("Receiver", args.receiver)
+        ("Receiver", receiver)
     ]
     print_table("Execution Summary", exec_summary)
-
-    def cleanup():
-        if sender.interface:
-            logger.info("Cleaning up Meshtastic connection...")
-            sender.close_connection()
-
-    atexit.register(cleanup)
 
 if __name__ == "__main__":
     main()
