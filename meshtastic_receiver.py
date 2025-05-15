@@ -47,7 +47,7 @@ import signal
 import subprocess
 import sys
 import time
-from threading import Lock
+from threading import Lock, Event
 import atexit
 
 from pubsub import pub
@@ -97,6 +97,7 @@ class PersistentMeshtasticReceiver:
         self.header_digit_pattern = re.compile(r"\d+")  # Precompiled regex for extracting digits from header.
         self.last_progress_time = time.time()  # Timestamp for progress updates.
         self.interface = None
+        self.termination_event = Event()  # Add termination event
 
     def __enter__(self):
         """Context manager entry point: Open the connection."""
@@ -108,8 +109,7 @@ class PersistentMeshtasticReceiver:
         self.close_connection()
 
     def open_connection(self, tcp_host="localhost"):
-        """Establishes a persistent Meshtastic connection (TCP or Serial)."""
-        retries = 3
+        retries = 5
         for attempt in range(1, retries + 1):
             try:
                 if self.connection == 'tcp':
@@ -122,14 +122,15 @@ class PersistentMeshtasticReceiver:
                     logger.error(f"Unknown connection type: {self.connection}")
                     sys.exit(1)
                 logger.info("Persistent connection established.")
-                return  # Exit the loop if the connection is successful
+                time.sleep(2)  # Ensure the connection is stable
+                return
             except Exception as e:
                 logger.error(f"Error establishing connection (Attempt {attempt}/{retries}): {e}")
                 if attempt < retries:
-                    time.sleep(2)  # Wait before retrying
+                    time.sleep(2)
                 else:
                     logger.error("Failed to establish connection after multiple attempts. Exiting.")
-                    self.close_connection()
+                    self.cleanup()
                     sys.exit(1)
 
     def close_connection(self):
@@ -147,6 +148,8 @@ class PersistentMeshtasticReceiver:
                         logger.error(f"Error stopping threads: {e}")
                 self.interface.close()
                 logger.info("Persistent connection closed.")
+        except BrokenPipeError:
+            logger.warning("Broken pipe detected during connection close.")
         except Exception as e:
             logger.error(f"Error closing connection: {e}")
         finally:
@@ -211,48 +214,31 @@ class PersistentMeshtasticReceiver:
         self.print_table("Execution Summary", stats)
 
     def on_receive(self, packet, interface=None):
-        """
-        Callback to process an incoming message packet.
-
-        Filters the incoming packet based on:
-          - sender (if provided as a parameter).
-          - The message header (it must start with the expected header string).
-
-        After validation, it extracts the numeric header and stores the full message.
-        """
         try:
-            # Log the entire packet for debugging
             logger.debug(f"Received packet: {packet}")
 
-            # Check that the message originates from the expected sender, if specified.
             raw_sender = packet.get("fromId")
             if self.args.sender and (not raw_sender or raw_sender.lstrip("!") != self.args.sender):
                 logger.info(f"Ignored message from sender '{raw_sender}'; expected sender '{self.args.sender}'.")
                 return
 
-            # Extract and sanitize the message text.
-            text = (packet.get("decoded", {}).get("text", "").strip() or
-                    packet.get("text", "").strip())
+            text = (packet.get("decoded", {}).get("text", "").strip() or packet.get("text", "").strip())
             if not text:
                 logger.debug("Ignored packet with no text.")
                 return
 
-            # Ensure the message begins with the expected header followed by a numeric portion.
             if not text.startswith(self.args.header):
                 logger.info(f"Ignored message because it does not start with '{self.args.header}': {text}")
                 return
 
-            # Remove the header by splitting on the first "!" character.
             if "!" in text:
                 header_part, payload = text.split("!", 1)
             else:
                 header_part = text
                 payload = ""
 
-            # Log extracted header and payload for debugging
             logger.debug(f"Header part: {header_part}, Payload: {payload}")
 
-            # Extract the numeric portion from the header using the precompiled regex.
             match = self.header_digit_pattern.search(header_part)
             if match:
                 header_num = int(match.group())
@@ -331,43 +317,35 @@ class PersistentMeshtasticReceiver:
         logger.error("Upload failed after 3 attempts.")
         sys.exit(1)
 
+    def check_progress_and_timeout(self, now, end_time):
+        if now - self.last_message_time > self.args.inactivity_timeout:
+            logger.info("Inactivity timeout reached. Ending collection.")
+            self.running = False
+            return False
+
+        if now - self.last_progress_time >= self.args.poll_interval:
+            with self.state_lock:
+                total_msgs = len(self.received_messages)
+            remaining_time = end_time - now
+            logger.info(
+                f"Progress: {total_msgs} messages received, expected: {self.args.expected_messages}, "
+                f"time remaining: {remaining_time:.1f} sec"
+            )
+            self.last_progress_time = now
+        return True
+
     async def run(self):
-        """
-        Runs the main asynchronous loop until the specified run_time or inactivity timeout is reached.
-
-        This loop periodically checks progress. After collection stops, it:
-          - Combines the message payloads.
-          - If --upload is set, performs the file upload.
-          - Prints the execution summary.
-        """
         self.open_connection()
-
-        # Set the on_receive callback
         pub.subscribe(self.on_receive, "meshtastic.receive")
         logger.info("Subscribed to 'meshtastic.receive' topic.")
 
         logger.info("Entering main processing loop...")
         end_time = self.start_time + self.args.run_time * 60
 
-        while self.running and time.time() < end_time:
+        while self.running and not self.termination_event.is_set() and time.time() < end_time:
             now = time.time()
-
-            # Check for inactivity timeout
-            if now - self.last_message_time > self.args.inactivity_timeout:
-                logger.info("Inactivity timeout reached. Ending collection.")
-                self.running = False
+            if not self.check_progress_and_timeout(now, end_time):
                 break
-
-            # Log progress at regular intervals
-            if now - self.last_progress_time >= self.args.poll_interval:
-                with self.state_lock:
-                    total_msgs = len(self.received_messages)
-                remaining_time = end_time - now
-                logger.info(
-                    f"Progress: {total_msgs} messages received, expected: {self.args.expected_messages}, "
-                    f"time remaining: {remaining_time:.1f} sec"
-                )
-                self.last_progress_time = now
 
             # Stop if all expected messages are received
             with self.state_lock:
@@ -376,15 +354,14 @@ class PersistentMeshtasticReceiver:
                     self.running = False
                     break
 
-            await asyncio.sleep(0.5)
-
-        # Attempt graceful shutdown of the Meshtastic interface.
-        if self.interface:
             try:
-                self.interface.close_connection()
-                logger.info("Connection closed successfully.")
-            except Exception as e:
-                logger.debug(f"Error closing connection: {e}")
+                self.interface.sendHeartbeat()
+            except BrokenPipeError:
+                logger.warning("Broken pipe detected. Reconnecting...")
+                self.close_connection()
+                self.open_connection()
+
+            await asyncio.sleep(0.5)
 
         # Process collected messages.
         self.combine_messages()
@@ -399,18 +376,27 @@ class PersistentMeshtasticReceiver:
         with self.state_lock:
             total_msgs = len(self.received_messages)
         missing_msgs = self.args.expected_messages - total_msgs if self.args.expected_messages > total_msgs else 0
-        if os.path.exists(self.args.output):
-            file_size = os.path.getsize(self.args.output)
-        else:
-            file_size = "N/A"
+        file_size = os.path.getsize(self.args.output) if os.path.exists(self.args.output) else "N/A"
         self.print_execution_summary(total_runtime, total_msgs, missing_msgs, file_size)
+
+        self.cleanup()
+
+    def cleanup(self):
+        """Cleans up resources and closes the connection."""
+        if self.interface:
+            try:
+                logger.info("Cleaning up Meshtastic connection...")
+                self.close_connection()
+            except Exception as e:
+                logger.error(f"Error during cleanup: {e}")
 
 
 # ---------------------- Signal Handling for Receiving ----------------------
 def setup_signal_handlers(receiver):
     def handler(sig, frame):
         logger.info(f"Signal {sig} detected. Closing connection...")
-        receiver.close_connection()
+        receiver.termination_event.set()  # Signal termination
+        receiver.cleanup()
         sys.exit(0)
     signal.signal(signal.SIGINT, handler)
     signal.signal(signal.SIGTERM, handler)
@@ -442,6 +428,7 @@ def main():
 
     configure_logging(args.debug)
     receiver = PersistentMeshtasticReceiver(args)
+    atexit.register(receiver.cleanup)
     receiver.print_table("Startup Summary", [
         ("run_time (min)", args.run_time),
         ("sender", args.sender),
@@ -464,13 +451,6 @@ def main():
     except Exception as e:
         logger.error(f"Fatal error: {e}")
         sys.exit(1)
-
-    def cleanup():
-        if receiver.interface:
-            logger.info("Cleaning up Meshtastic connection...")
-            receiver.close_connection()
-
-    atexit.register(cleanup)
 
 if __name__ == "__main__":
     main()
