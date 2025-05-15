@@ -222,6 +222,7 @@ def upload_file(file_path: str, remote_target: str, ssh_key: str):
 from meshtastic.tcp_interface import TCPInterface
 from meshtastic.serial_interface import SerialInterface
 from urllib.parse import urlencode
+from threading import Event
 
 class PersistentMeshtasticSender:
     """
@@ -245,6 +246,7 @@ class PersistentMeshtasticSender:
         self.sleep_delay = sleep_delay
         self.start_delay = start_delay
         self.interface = None
+        self.termination_event = Event()
 
     def __enter__(self):
         """Context manager entry point: Open the connection."""
@@ -328,15 +330,16 @@ class PersistentMeshtasticSender:
                         logger.error(f"Error stopping threads: {e}")
                 self.interface.close()
                 logger.info("Persistent connection closed.")
+        except BrokenPipeError:
+            logger.warning("Broken pipe detected during connection close.")
         except Exception as e:
             logger.error(f"Error closing connection: {e}")
         finally:
             self.interface = None
 
-    def send_chunk(self, message: str, chunk_index: int, total_chunks: int) -> int:
+    async def send_chunk(self, message: str, chunk_index: int, total_chunks: int) -> int:
         """
         Sends a single chunk (optionally prepended with a generated header) with retries.
-        
         Returns the number of retries performed on success.
         """
         if self.header_template:
@@ -358,12 +361,12 @@ class PersistentMeshtasticSender:
             except BrokenPipeError:
                 logger.warning(f"Broken pipe detected. Reconnecting... (Attempt {attempt+1}/{self.max_retries})")
                 self.close_connection()
-                time.sleep(2)  # Wait before reconnecting
-                self.open_connection()  # Reopen the connection
+                await asyncio.sleep(2)  # Use asyncio.sleep to make it interruptible
+                self.open_connection()
             except Exception as e:
                 attempt += 1
                 logger.warning(f"Retry {attempt}/{self.max_retries} for chunk {chunk_index} due to error: {e}")
-                time.sleep(self.retry_delay)
+                await asyncio.sleep(self.retry_delay)  # Use asyncio.sleep
                 if attempt == self.max_retries:
                     logger.error(f"Aborting after {self.max_retries} retries for chunk {chunk_index}.")
                     sys.exit(1)
@@ -408,7 +411,7 @@ class PersistentMeshtasticSender:
             logger.error(f"Failed to send initial message: {e}")
             sys.exit(1)
 
-    def send_all_chunks(self, receiver: dict):
+    async def send_all_chunks(self, receiver: dict):
         """
         Reads file content, splits it into chunks, then sequentially sends each chunk.
 
@@ -426,13 +429,16 @@ class PersistentMeshtasticSender:
         # Sleep for the specified start delay
         if self.start_delay > 0:
             logger.info(f"Sleeping for {self.start_delay} seconds before sending chunks...")
-            time.sleep(self.start_delay)
+            self.termination_event.wait(self.start_delay)  # Wait with termination support
 
         total_failures = 0
         for i, chunk in enumerate(chunks, start=1):
-            failures = self.send_chunk(chunk, i, total_chunks)
+            if self.termination_event.is_set():
+                logger.info("Termination event detected. Stopping chunk sending.")
+                break
+            failures = await self.send_chunk(chunk, i, total_chunks)  # Use await here
             total_failures += failures
-            time.sleep(self.sleep_delay)
+            self.termination_event.wait(self.sleep_delay)  # Wait with termination support
 
         logger.info("All chunks sent successfully.")
         return total_chunks, total_failures
@@ -454,6 +460,7 @@ class PersistentMeshtasticSender:
 def setup_signal_handlers(sender):
     def handler(sig, frame):
         logger.info(f"Signal {sig} detected. Closing connection...")
+        sender.termination_event.set()  # Signal termination
         sender.close_connection()
         sys.exit(0)
     signal.signal(signal.SIGINT, handler)
@@ -547,16 +554,24 @@ def main():
     # Initialize variables for execution summary
     total_chunks = 0
     total_failures = 0
-    start_time = time.time()
     end_time = None
 
     try:
-        try:
-            receiver = json.loads(args.receiver)
-        except json.JSONDecodeError as e:
-            logger.error(f"Invalid JSON for --receiver: {e}")
-            sys.exit(1)
+        asyncio.run(run_sender(args))
+    except Exception as e:
+        logger.error(f"An error occurred: {e}")
+        sys.exit(1)
 
+async def run_sender(args):
+    try:
+        receiver = json.loads(args.receiver)
+    except json.JSONDecodeError as e:
+        logger.error(f"Invalid JSON for --receiver: {e}")
+        sys.exit(1)
+
+    start_time = time.time()
+
+    if args.mode in ["image_transfer", "file_transfer"]:
         if args.mode == "image_transfer":
             print("Running image processing pipeline...")
             summary = optimize_compress_zip_base64encode_jpg(
@@ -586,7 +601,7 @@ def main():
             ) as sender:
                 setup_signal_handlers(sender)
                 try:
-                    total_chunks, total_failures = sender.send_all_chunks(receiver=receiver)
+                    total_chunks, total_failures = await sender.send_all_chunks(receiver=receiver)
                 finally:
                     sender.close_connection()
                     logger.info("Connection closed successfully.")
@@ -638,66 +653,57 @@ def main():
             ) as sender:
                 setup_signal_handlers(sender)
                 try:
-                    total_chunks, total_failures = sender.send_all_chunks(receiver=receiver)
+                    total_chunks, total_failures = await sender.send_all_chunks(receiver=receiver)
                 finally:
                     sender.close_connection()
                     logger.info("Connection closed successfully.")
             end_time = time.time()
 
-        elif args.mode == "message":
-            if not args.message:
-                logger.error("For message mode, --message is required.")
-                sys.exit(1)
+    elif args.mode == "message":
+        if not args.message:
+            logger.error("For message mode, --message is required.")
+            sys.exit(1)
 
-            print("Sending a single message...")
-            with PersistentMeshtasticSender(
-                file_path=None,
-                chunk_size=0,
-                dest=args.dest,
-                connection=args.connection,
-                max_retries=args.max_retries,
-                retry_delay=args.retry_delay,
-                header_template=args.header,
-                sleep_delay=args.sleep_delay,
-                start_delay=args.start_delay
-            ) as sender:
-                setup_signal_handlers(sender)
-                try:
-                    sender.send_message(args.message)
-                finally:
-                    sender.close_connection()
-                    logger.info("Connection closed successfully.")
-            end_time = time.time()
+        print("Sending a single message...")
+        with PersistentMeshtasticSender(
+            file_path=None,
+            chunk_size=0,
+            dest=args.dest,
+            connection=args.connection,
+            max_retries=args.max_retries,
+            retry_delay=args.retry_delay,
+            header_template=args.header,
+            sleep_delay=args.sleep_delay,
+            start_delay=args.start_delay
+        ) as sender:
+            setup_signal_handlers(sender)
+            try:
+                sender.send_message(args.message)
+            finally:
+                sender.close_connection()
+                logger.info("Connection closed successfully.")
+        end_time = time.time()
 
-    except Exception as e:
-        logger.error(f"An error occurred: {e}")
-        sys.exit(1)
+    # Calculate total size of data sent
+    if args.mode in ["image_transfer", "file_transfer"]:
+        total_size = total_chunks * args.chunk_size
+    else:
+        total_size = 0
 
-    finally:
-        if end_time is None:
-            end_time = time.time()
-        elapsed_seconds = end_time - start_time
-        formatted_elapsed = time.strftime("%H:%M:%S", time.gmtime(elapsed_seconds))
+    # Calculate transmission speed
+    elapsed_seconds = end_time - start_time
+    speed = total_size / elapsed_seconds if elapsed_seconds > 0 else 0
 
-        # Calculate total size of data sent
-        if args.mode in ["image_transfer", "file_transfer"]:
-            total_size = total_chunks * args.chunk_size
-        else:
-            total_size = 0
-
-        # Calculate transmission speed
-        speed = total_size / elapsed_seconds if elapsed_seconds > 0 else 0
-
-        exec_summary = [
-            ("Start Time", time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(start_time))),
-            ("End Time", time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(end_time))),
-            ("Time Elapsed", formatted_elapsed),
-            ("Total Chunks Sent", total_chunks),
-            ("Total Data Sent", f"{total_size} bytes"),
-            ("Transmission Speed", f"{speed:.2f} bytes/second"),
-            ("Receiver", args.receiver)
-        ]
-        print_table("Execution Summary", exec_summary)
+    exec_summary = [
+        ("Start Time", time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(start_time))),
+        ("End Time", time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(end_time))),
+        ("Time Elapsed", time.strftime("%H:%M:%S", time.gmtime(elapsed_seconds))),
+        ("Total Chunks Sent", total_chunks),
+        ("Total Data Sent", f"{total_size} bytes"),
+        ("Transmission Speed", f"{speed:.2f} bytes/second"),
+        ("Receiver", args.receiver)
+    ]
+    print_table("Execution Summary", exec_summary)
 
     def cleanup():
         if sender.interface:
