@@ -269,6 +269,8 @@ class MeshtasticBot:
                         logger.error(f"Error stopping threads: {e}")
                 self.interface.close()
                 logger.info("Persistent connection closed.")
+        except BrokenPipeError:
+            logger.warning("Broken pipe detected during connection close.")
         except Exception as e:
             logger.error(f"Error closing connection: {e}")
         finally:
@@ -292,6 +294,30 @@ class MeshtasticBot:
                 return
 
             logger.info("Received message from node %s: %s", sender, text)
+
+            # Add the new "resetnodedb!" command
+            if text == "resetnodedb!":
+                logger.info("Received 'resetnodedb!' command; resetting the node database")
+                try:
+                    # Execute the Meshtastic CLI command
+                    result = subprocess.run(
+                        ["meshtastic", "--reset-nodedb"],
+                        capture_output=True,
+                        text=True
+                    )
+                    if result.returncode == 0:
+                        logger.info("Node database reset successfully.")
+                        if self.interface:
+                            self.interface.sendText("Node database reset successfully.", sender, wantAck=True)
+                    else:
+                        logger.error(f"Failed to reset node database: {result.stderr.strip()}")
+                        if self.interface:
+                            self.interface.sendText(f"Failed to reset node database: {result.stderr.strip()}", sender, wantAck=True)
+                except Exception as e:
+                    logger.error(f"Error executing 'resetnodedb!' command: {e}")
+                    if self.interface:
+                        self.interface.sendText(f"Error executing 'resetnodedb!' command: {e}", sender, wantAck=True)
+                return
 
             if text.startswith("cmd!"):
                 command = text[len("cmd!"):].strip()
@@ -573,8 +599,6 @@ class MeshtasticBot:
         Runs the bot, maintaining a persistent connection and listening for messages.
         """
         global logger
-        self.perform_cleanup()
-
         self.open_connection()
         try:
             while True:
@@ -628,25 +652,6 @@ class MeshtasticBot:
         except Exception as e:
             logger.error(f"Error retrieving Meshtastic info: {e}")
             return "Error retrieving Meshtastic info."
-
-    def perform_cleanup(self):
-        """
-        Performs cleanup tasks on the Meshtastic device, such as resetting the node database.
-        """
-        try:
-            logger.info("Connecting to Meshtastic node for cleanup...")
-            cleanup_interface = TCPInterface(host=self.tcp_host, port=50080)  # Adjust port as needed
-            time.sleep(3)  # Wait for the connection to stabilize
-
-            logger.info("Sending 'nodedb reset' command...")
-            cleanup_interface.sendText("nodedb reset")
-            logger.info("Node database reset command sent successfully.")
-        except Exception as e:
-            logger.error(f"An error occurred during cleanup: {e}")
-        finally:
-            if 'cleanup_interface' in locals() and cleanup_interface:
-                cleanup_interface.close()
-                logger.info("Cleanup connection closed.")
 
 # ---------------------- Helper Functions ----------------------
 def build_command(params, script):
