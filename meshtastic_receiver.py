@@ -122,6 +122,7 @@ class PersistentMeshtasticReceiver:
                     logger.error(f"Unknown connection type: {self.connection}")
                     sys.exit(1)
                 logger.info("Persistent connection established.")
+                pub.subscribe(self.on_receive, "meshtastic.receive")  # Re-subscribe after reconnecting
                 time.sleep(2)  # Ensure the connection is stable
                 return
             except Exception as e:
