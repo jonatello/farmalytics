@@ -258,25 +258,46 @@ class MeshtasticBot:
         """Closes the persistent Meshtastic connection."""
         try:
             if self.interface:
-                logger.info("Stopping Meshtastic threads...")
-                if hasattr(self.interface, "stop"):
-                    try:
-                        self.interface.stop(timeout=10)  # Gracefully stop threads with a timeout
-                        logger.info("Stopped all Meshtastic threads.")
-                    except TimeoutError:
-                        logger.warning("Timeout while stopping Meshtastic threads. Forcing connection close.")
-                    except Exception as e:
-                        logger.error(f"Error stopping threads: {e}")
-                self.interface.close()
-                logger.info("Persistent connection closed.")
-        except BrokenPipeError:
-            logger.warning("Broken pipe detected during connection close.")
-        except Exception as e:
-            logger.error(f"Error closing connection: {e}")
-        finally:
-            self.interface = None
+                logger.info(f"Interface state before closing: {self.interface}")
+                try:
+                    # Attempt to close the interface
+                    self.interface.close()
+                    logger.info("Persistent connection closed.")
+                except Exception as e:
+                    logger.error(f"Error closing interface: {e}")
 
-    def on_receive(self, packet, interface=None):
+                # Check and close any lingering sockets
+                if hasattr(self.interface, "_socket"):
+                    logger.debug(f"Closing socket: {self.interface._socket}")
+                    try:
+                        self.interface._socket.shutdown(socket.SHUT_RDWR)
+                        self.interface._socket.close()
+                        logger.info("Socket closed.")
+                    except Exception as e:
+                        logger.warning(f"Error closing socket: {e}")
+
+                # Check and stop any lingering threads
+                if hasattr(self.interface, "_thread"):
+                    logger.debug(f"Stopping thread: {self.interface._thread}")
+                    try:
+                        self.interface._thread.join(timeout=10)
+                        logger.info("Thread stopped.")
+                    except Exception as e:
+                        logger.warning(f"Error stopping thread: {e}")
+            else:
+                logger.warning("No active interface to close.")
+        except Exception as e:
+            logger.error(f"Unexpected error during connection close: {e}")
+        finally:
+            # Nullify the interface to ensure no lingering references
+            self.interface = None
+            logger.info("Meshtastic interface set to None.")
+            # Force garbage collection
+            import gc
+            gc.collect()
+            logger.info(f"Interface state after closing: {self.interface}")
+
+    def on_receive(self, packet):
         """
         Handles incoming messages and executes commands based on the message content.
         """
@@ -484,9 +505,6 @@ class MeshtasticBot:
                 # Log parsed parameters for debugging
                 logger.debug(f"Parsed parameters: {params}")
 
-                cmd = ["python3"] + build_command(params, SENDER_SCRIPT)
-                logger.info("Received 'send!' command. Running: %s", " ".join(cmd))
-
                 # Close the Meshtastic connection before running the sender script
                 if self.interface:
                     try:
@@ -497,9 +515,13 @@ class MeshtasticBot:
 
                 time.sleep(5)  # Add a short delay to ensure the connection is fully closed
 
+                cmd = ["python3"] + build_command(params, SENDER_SCRIPT)
+                env = os.environ.copy()  # Ensure the subprocess inherits the correct environment
+                logger.info("Received 'send!' command. Running: %s", " ".join(cmd))
+
                 try:
                     # Use subprocess.Popen for real-time logging
-                    process = subprocess.Popen(shlex.split(" ".join(cmd)), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                    process = subprocess.Popen(shlex.split(" ".join(cmd)), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
                     try:
                         # Stream stdout and stderr in real-time
                         for line in process.stdout:
@@ -546,10 +568,6 @@ class MeshtasticBot:
                 # Log parsed parameters for debugging
                 logger.debug(f"Parsed parameters: {params}")
 
-                # Ensure the output parameter is passed to the receiver script
-                cmd = ["python3"] + build_command(params, RECEIVER_SCRIPT)
-                logger.info("Received 'receive!' command. Running: %s", " ".join(cmd))
-
                 if self.interface:
                     try:
                         self.close_connection()
@@ -559,8 +577,13 @@ class MeshtasticBot:
 
                 time.sleep(5)  # Add a short delay to ensure the connection is fully closed
 
+                # Ensure the output parameter is passed to the receiver script
+                cmd = ["python3"] + build_command(params, RECEIVER_SCRIPT)
+                env = os.environ.copy()  # Ensure the subprocess inherits the correct environment
+                logger.info("Received 'receive!' command. Running: %s", " ".join(cmd))
+
                 try:
-                    process = subprocess.Popen(shlex.split(" ".join(cmd)), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                    process = subprocess.Popen(shlex.split(" ".join(cmd)), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
                     try:
                         # Stream stdout and stderr in real-time
                         for line in process.stdout:
