@@ -562,7 +562,7 @@ def main():
                         help="Connection mode: 'tcp' or 'serial'")
     parser.add_argument("-t", "--tcp_host", type=str, default="localhost",
                         help="TCP host (default: localhost, used only in TCP mode)")
-    parser.add_argument("-rp", "--receiver", type=str, default='{"sender": "eb314389"}',
+    parser.add_argument("-rp", "--receiver", type=str, default="{}",
                         help="Receiver JSON object containing receiver-specific parameters")
     args = parser.parse_args()
 
