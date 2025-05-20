@@ -297,7 +297,7 @@ class MeshtasticBot:
             gc.collect()
             logger.info(f"Interface state after closing: {self.interface}")
 
-    def on_receive(self, packet):
+    def on_receive(self, packet, interface=None):
         """
         Handles incoming messages and executes commands based on the message content.
         """
