@@ -257,6 +257,10 @@ class MeshtasticBot:
     def close_connection(self):
         """Closes the persistent Meshtastic connection."""
         try:
+            # Unsubscribe from all topics
+            pub.unsubscribe(self.on_receive, "meshtastic.receive")
+            logger.info("Unsubscribed from 'meshtastic.receive' topic.")
+
             if self.interface:
                 logger.info(f"Interface state before closing: {self.interface}")
                 try:
